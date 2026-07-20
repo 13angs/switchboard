@@ -56,6 +56,30 @@ export async function dismissSession(
   return res.json();
 }
 
+export async function dismissSessions(
+  sessionIds: string[]
+): Promise<OkResponse> {
+  const res = await fetch(`${BASE}/sessions/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_ids: sessionIds }),
+  });
+  if (!res.ok) throw new Error(`dismiss many ${res.status}`);
+  return res.json();
+}
+
+export async function undismissSessions(
+  sessionIds: string[]
+): Promise<OkResponse> {
+  const res = await fetch(`${BASE}/sessions/undismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_ids: sessionIds }),
+  });
+  if (!res.ok) throw new Error(`undismiss many ${res.status}`);
+  return res.json();
+}
+
 /** Fetch file contents from the agent's worktree (view=files feature). */
 export async function fetchFileContent(
   sessionId: string,

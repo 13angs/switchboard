@@ -11,6 +11,8 @@ interface CardProps {
   onKill: (sessionId: string) => void;
   onDismiss: (sessionId: string) => void;
   onCopyId: (sessionId: string) => void;
+  selected: boolean;
+  onToggleSelected: (sessionId: string) => void;
   transcript: { role: string; text: string; ts: string }[] | null;
   loadingTranscript: boolean;
 }
@@ -40,6 +42,8 @@ const CardImpl: FC<CardProps> = ({
   onKill,
   onDismiss,
   onCopyId,
+  selected,
+  onToggleSelected,
   transcript,
   loadingTranscript,
 }) => {
@@ -50,13 +54,26 @@ const CardImpl: FC<CardProps> = ({
 
   return (
     <div
-      className={`card s-${card.activity}${expanded ? ' expanded' : ''}`}
+      className={`card s-${card.activity}${expanded ? ' expanded' : ''}${selected ? ' selected' : ''}`}
       tabIndex={0}
       onClick={() => onOpenTerminal(card)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onOpenTerminal(card);
       }}
     >
+      <label
+        className="card-select"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        title="Select session"
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelected(card.session_id)}
+          aria-label={`Select ${card.title || card.session_id}`}
+        />
+      </label>
       <div className="card-top">
         <div className="card-title">{card.title || card.session_id || 'Untitled'}</div>
         <span className={`state-badge st-${card.activity}`}>
