@@ -12,6 +12,8 @@ interface ColumnProps {
   onKill: (sessionId: string) => void;
   onDismiss: (sessionId: string) => void;
   onCopyId: (sessionId: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelected: (sessionId: string) => void;
   transcripts: Record<string, { role: string; text: string; ts: string }[] | null>;
   loadingTranscripts: Record<string, boolean>;
 }
@@ -26,6 +28,8 @@ export const Column: FC<ColumnProps> = ({
   onKill,
   onDismiss,
   onCopyId,
+  selectedIds,
+  onToggleSelected,
   transcripts,
   loadingTranscripts,
 }) => {
@@ -49,6 +53,8 @@ export const Column: FC<ColumnProps> = ({
               onKill={onKill}
               onDismiss={onDismiss}
               onCopyId={onCopyId}
+              selected={selectedIds.has(c.session_id)}
+              onToggleSelected={onToggleSelected}
               transcript={transcripts[c.session_id] ?? null}
               loadingTranscript={loadingTranscripts[c.session_id] ?? false}
             />

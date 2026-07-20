@@ -15,6 +15,8 @@ interface BoardGridProps {
   onKill: (sessionId: string) => void;
   onDismiss: (sessionId: string) => void;
   onCopyId: (sessionId: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelected: (sessionId: string) => void;
   transcripts: Record<string, { role: string; text: string; ts: string }[] | null>;
   loadingTranscripts: Record<string, boolean>;
 }
@@ -30,6 +32,8 @@ export const BoardGrid: FC<BoardGridProps> = ({
   onKill,
   onDismiss,
   onCopyId,
+  selectedIds,
+  onToggleSelected,
   transcripts,
   loadingTranscripts,
 }) => {
@@ -46,6 +50,8 @@ export const BoardGrid: FC<BoardGridProps> = ({
           onKill={onKill}
           onDismiss={onDismiss}
           onCopyId={onCopyId}
+          selectedIds={selectedIds}
+          onToggleSelected={onToggleSelected}
           transcripts={transcripts}
           loadingTranscripts={loadingTranscripts}
         />
@@ -67,6 +73,8 @@ export const BoardGrid: FC<BoardGridProps> = ({
           onKill={onKill}
           onDismiss={onDismiss}
           onCopyId={onCopyId}
+          selectedIds={selectedIds}
+          onToggleSelected={onToggleSelected}
           transcripts={transcripts}
           loadingTranscripts={loadingTranscripts}
         />

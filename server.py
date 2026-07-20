@@ -24,6 +24,8 @@ Endpoints:
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
+    POST /sessions/dismiss            -> {ok, session_ids[], count}
+    POST /sessions/undismiss          -> {ok, session_ids[], count}
     POST /session/<id>/kill           -> {ok, session_id, killed}
     GET  /ws/agent?session_id=<id>    -> WebSocket upgrade → PTY (registry-backed;
                                          /ws/shell reserved for the future board
@@ -213,6 +215,19 @@ def _session_from_path(path: str, suffix: str) -> Optional[str]:
     if len(parts) == 3 and parts[0] == "session" and parts[2] == suffix:
         return unquote(parts[1])
     return None
+
+
+def _read_json_body(request: BaseHTTPRequestHandler) -> tuple[Optional[dict], Optional[str]]:
+    content_length = int(request.headers.get("Content-Length", 0))
+    if content_length <= 0:
+        return None, "empty body"
+    try:
+        body = json.loads(request.rfile.read(content_length))
+    except (json.JSONDecodeError, ValueError):
+        return None, "invalid JSON"
+    if not isinstance(body, dict):
+        return None, "JSON body must be an object"
+    return body, None
 
 
 def _chat_message_payload(text: str, harness_name: str) -> bytes:
@@ -611,11 +626,17 @@ def make_handler(repo_root: str):
             path = urlparse(self.path).path
             if path == "/session/start":
                 self._session_start(repo_root)
+            elif path == "/sessions/dismiss":
+                self._bulk_archive(repo_root, dismiss=True)
+            elif path == "/sessions/undismiss":
+                self._bulk_archive(repo_root, dismiss=False)
             elif (sid := _session_from_path(path, "dismiss")) is not None:
                 archive.dismiss(sid, repo_root)
+                discovery.invalidate_cache(repo_root)
                 self._json(200, {"ok": True, "session_id": sid})
             elif (sid := _session_from_path(path, "undismiss")) is not None:
                 archive.undismiss(sid, repo_root)
+                discovery.invalidate_cache(repo_root)
                 self._json(200, {"ok": True, "session_id": sid})
             elif (sid := _session_from_path(path, "kill")) is not None:
                 self._kill(sid)
@@ -623,6 +644,35 @@ def make_handler(repo_root: str):
                 self._message(sid)
             else:
                 self._json(404, {"error": "not found"})
+
+        def _bulk_archive(self, repo_root: str, dismiss: bool):
+            body, error = _read_json_body(self)
+            if error:
+                self._json(400, {"error": error})
+                return
+
+            raw_ids = body.get("session_ids") if body else None
+            if not isinstance(raw_ids, list) or not raw_ids:
+                self._json(400, {"error": "session_ids must be a non-empty list"})
+                return
+            if not any(isinstance(sid, str) and sid.strip() for sid in raw_ids):
+                self._json(400, {"error": "session_ids must include at least one non-empty string"})
+                return
+
+            if dismiss:
+                changed = archive.dismiss_many(raw_ids, repo_root)
+            else:
+                changed = archive.undismiss_many(raw_ids, repo_root)
+
+            discovery.invalidate_cache(repo_root)
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "session_ids": changed,
+                    "count": len(changed),
+                },
+            )
 
         def _kill(self, session_id: str):
             """Terminate a live PTY (SIGTERM) + drop it. If it is not in the

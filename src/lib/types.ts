@@ -91,6 +91,8 @@ export interface SessionStartResponse {
 export interface OkResponse {
   ok: boolean;
   session_id?: string;
+  session_ids?: string[];
+  count?: number;
   killed?: boolean;
 }
 

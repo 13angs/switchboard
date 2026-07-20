@@ -73,11 +73,68 @@ def dismiss(session_id: str, repo_root: str, auto: bool = False) -> None:
     _save(repo_root, entries)
 
 
+def _unique_session_ids(session_ids: list[str]) -> list[str]:
+    """Return non-empty session ids once, preserving request order."""
+    seen = set()
+    unique = []
+    for sid in session_ids:
+        if not isinstance(sid, str):
+            continue
+        sid = sid.strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        unique.append(sid)
+    return unique
+
+
+def dismiss_many(session_ids: list[str], repo_root: str, auto: bool = False) -> list[str]:
+    """Mark many sessions as dismissed/archived with one ledger write.
+
+    Returns the unique session ids accepted from the request, preserving order.
+    Existing entries are refreshed to match single-session dismiss semantics.
+    """
+    unique = _unique_session_ids(session_ids)
+    if not unique:
+        return []
+
+    entries = load(repo_root)
+    dismissed_at = datetime.now(timezone.utc).isoformat()
+    for sid in unique:
+        entries[sid] = ArchiveEntry(
+            dismissed=True,
+            dismissed_at=dismissed_at,
+            auto=auto,
+        )
+    _save(repo_root, entries)
+    return unique
+
+
 def undismiss(session_id: str, repo_root: str) -> None:
     """Remove a session from the archive ledger (un-dismiss)."""
     entries = load(repo_root)
     entries.pop(session_id, None)
     _save(repo_root, entries)
+
+
+def undismiss_many(session_ids: list[str], repo_root: str) -> list[str]:
+    """Remove many sessions from the archive ledger with one write.
+
+    Returns the ids that were present and removed, preserving request order.
+    """
+    unique = _unique_session_ids(session_ids)
+    if not unique:
+        return []
+
+    entries = load(repo_root)
+    removed = []
+    for sid in unique:
+        if sid in entries:
+            entries.pop(sid, None)
+            removed.append(sid)
+    if removed:
+        _save(repo_root, entries)
+    return removed
 
 
 def _save(repo_root: str, entries: Dict[str, ArchiveEntry]) -> None:
