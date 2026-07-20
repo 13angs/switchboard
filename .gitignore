@@ -1,0 +1,12 @@
+# Model provider secrets — NEVER commit (ADR Decision 2 / plan C1).
+# Holds ORCH_DEEPSEEK_AUTH_TOKEN etc. Copy .env.example → .env and fill in.
+.env
+
+# React UI build artifacts
+node_modules/
+dist/
+
+# Python test/runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
