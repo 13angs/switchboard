@@ -156,10 +156,15 @@ def detect_provider(session_id: str, env_file: dict) -> Optional[str]:
                 deepseek_model = env_file.get("ORCH_DEEPSEEK_MODEL") or os.environ.get(
                     "ORCH_DEEPSEEK_MODEL"
                 )
-                if deepseek_model and str(model) == deepseek_model:
+                if deepseek_model:
+                    if str(model) == deepseek_model:
+                        return "deepseek"
+                    # Loose fallback: any deepseek model when provider is
+                    # configured → assume deepseek provider (covers model
+                    # aliases / variant suffixes).
                     return "deepseek"
-                # Loose fallback: any deepseek model → assume deepseek provider
-                return "deepseek"
+                # ORCH_DEEPSEEK_MODEL not configured — skip; the model name
+                # substring "deepseek" alone is not enough to claim the session.
             ollama_model = env_file.get("ORCH_OLLAMA_MODEL") or os.environ.get(
                 "ORCH_OLLAMA_MODEL"
             )
@@ -170,9 +175,15 @@ def detect_provider(session_id: str, env_file: dict) -> Optional[str]:
 
 
 def write_provider(session_id: str, cwd: str, provider: str) -> None:
-    """Persist a session's provider sidecar next to its jsonl. Only written for
-    non-default providers — absence means Claude (keeps existing sessions clean)."""
-    if not session_id or provider == "claude":
+    """Persist a session's provider sidecar next to its jsonl.
+
+    Always written — including for the Claude default — so read_provider() is the
+    authoritative source and detect_provider() jsonl scanning is never needed as a
+    fallback for orchestrator-created sessions. The sidecar is a machine-local
+    durable fact; absence of the file for pre-existing sessions means "created
+    before the sidecar feature" and the resolution chain falls back to detection.
+    """
+    if not session_id:
         return
     proj_dir = PROJECTS_DIR / encode_cwd(os.path.abspath(cwd))
     try:

@@ -216,7 +216,11 @@ def all_sessions_for_repo(repo_root: str) -> list[SessionSummary]:
     candidate_ids.update(_db_conversation_ids())
     sessions = []
     for conv_id in candidate_ids:
-        if not _is_under_repo(_cwd_for_conversation(conv_id), repo_root):
+        cwd = _cwd_for_conversation(conv_id)
+        # If we can resolve a cwd and it is NOT under repo_root, skip.
+        # If cwd is unresolvable (None), include the session anyway — we
+        # can't determine repo membership, so err on the side of showing.
+        if cwd and not _is_under_repo(cwd, repo_root):
             continue
         try:
             s = read_session(conv_id)
@@ -224,6 +228,10 @@ def all_sessions_for_repo(repo_root: str) -> list[SessionSummary]:
             continue
         if not s.session_id:
             continue
+        # If cwd is still None in the summary, default to repo_root so the
+        # card has a plausible worktree_path (mirrors claude_store pattern).
+        if not s.cwd:
+            s.cwd = repo_root
         sessions.append(s)
     sessions.sort(
         key=lambda s: s.last_ts or datetime.min.replace(tzinfo=timezone.utc),
