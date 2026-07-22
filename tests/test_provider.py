@@ -181,13 +181,15 @@ def test_available_providers_gated_on_full_config():
 
 def test_provider_sidecar_roundtrip_and_claude_writes_nothing():
     cwd = "/tmp/orch-p2-cwd"
-    # Claude (default) writes NO sidecar → read returns None.
+    # Claude (default) NOW writes a sidecar — always persisted so
+    # read_provider() is the authoritative source. Absence = created
+    # before the sidecar feature, not "default provider".
     claude_store.write_provider("sess-claude", cwd, "claude")
-    assert claude_store.read_provider("sess-claude") is None
+    assert claude_store.read_provider("sess-claude") == "claude"
     # DeepSeek writes a sidecar → read returns it (provider lock).
     claude_store.write_provider("sess-deep", cwd, "deepseek")
     assert claude_store.read_provider("sess-deep") == "deepseek"
-    # Ollama uses the same non-default provider sidecar path.
+    # Ollama uses the same provider sidecar path.
     claude_store.write_provider("sess-ollama", cwd, "ollama")
     assert claude_store.read_provider("sess-ollama") == "ollama"
 
@@ -211,6 +213,31 @@ def test_detect_provider_ollama_matches_configured_model_without_sidecar():
     )
 
     assert claude_store.detect_provider(session_id, FULL_OLLAMA) == "ollama"
+
+
+def test_detect_provider_deepseek_requires_config():
+    """A model containing 'deepseek' in its name must NOT claim the session
+    when ORCH_DEEPSEEK_MODEL is not configured — the substring alone is
+    not enough (guards against the loose-fallback false-positive)."""
+    cwd = "/tmp/orch-p2-ds-guard"
+    session_id = "sess-ds-noconfig"
+    path = Path(_TMP) / claude_store.encode_cwd(cwd) / f"{session_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": session_id,
+                "model": "deepseek-v4-pro",
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # ORCH_DEEPSEEK_MODEL not in env → must NOT return "deepseek".
+    assert claude_store.detect_provider(session_id, {}) is None
 
 
 def test_env_injection_reaches_child():
