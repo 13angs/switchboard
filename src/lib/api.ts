@@ -106,3 +106,42 @@ export async function startSession(
   });
   return res.json();
 }
+
+// ── Analytics (v2.5) ──
+
+export interface AnalyticsResponse {
+  generated_at: string;
+  repo: string;
+  days: number;
+  harness: string;
+  summary: {
+    total_sessions: number;
+    total_operations: number;
+    unique_files: number;
+  };
+  per_harness: Record<string, {
+    sessions: number;
+    operations: number;
+    unique_files: number;
+  }>;
+  top_files: Array<{
+    path: string;
+    total_ops: number;
+    reads: number;
+    edits: number;
+    writes: number;
+    sessions: number;
+    harnesses: Record<string, number>;
+  }>;
+}
+
+export async function fetchAnalytics(
+  days: number,
+  harness: string,
+): Promise<AnalyticsResponse> {
+  const res = await fetch(
+    `${BASE}/analytics/files?days=${days}&harness=${encodeURIComponent(harness)}`
+  );
+  if (!res.ok) throw new Error(`analytics ${res.status}`);
+  return res.json();
+}
