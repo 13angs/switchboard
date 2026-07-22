@@ -55,6 +55,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from control_plane import (
     agy_store,
+    analytics,
     archive,
     claude_store,
     config,
@@ -217,7 +218,9 @@ def _session_from_path(path: str, suffix: str) -> Optional[str]:
     return None
 
 
-def _read_json_body(request: BaseHTTPRequestHandler) -> tuple[Optional[dict], Optional[str]]:
+def _read_json_body(
+    request: BaseHTTPRequestHandler,
+) -> tuple[Optional[dict], Optional[str]]:
     content_length = int(request.headers.get("Content-Length", 0))
     if content_length <= 0:
         return None, "empty body"
@@ -606,6 +609,15 @@ def make_handler(repo_root: str):
                     self._send(200, asset.read_bytes(), ctype)
                 else:
                     self._json(404, {"error": "not found"})
+            elif path == "/analytics":
+                # Analytics page — static HTML (v2.5)
+                f = _serve_static("analytics.html")
+                if f:
+                    self._send(200, f.read_bytes(), "text/html; charset=utf-8")
+                else:
+                    self._json(404, {"error": "not found"})
+            elif path == "/analytics/files":
+                self._analytics_files(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -656,7 +668,10 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "session_ids must be a non-empty list"})
                 return
             if not any(isinstance(sid, str) and sid.strip() for sid in raw_ids):
-                self._json(400, {"error": "session_ids must include at least one non-empty string"})
+                self._json(
+                    400,
+                    {"error": "session_ids must include at least one non-empty string"},
+                )
                 return
 
             if dismiss:
@@ -705,6 +720,30 @@ def make_handler(repo_root: str):
                 pass
             finally:
                 _NOTIFICATION_HUB.unsubscribe(q)
+
+        def _analytics_files(self, repo_root: str):
+            """GET /analytics/files?days=1|7|30&harness=claude|codex|agy (v2.5)."""
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                days = int((qs.get("days") or [None])[0] or "7")
+            except (ValueError, TypeError):
+                self._json(400, {"error": "days must be 1, 7, or 30"})
+                return
+            harness_param = (qs.get("harness") or [None])[0]
+            if not harness_param:
+                self._json(400, {"error": "harness is required (claude|codex|agy)"})
+                return
+            harness_param = harness_param.strip().lower()
+            if harness_param not in analytics.VALID_HARNESSES:
+                self._json(400, {"error": f"unknown harness: {harness_param}"})
+                return
+            try:
+                result = analytics.files_analytics(repo_root, days, harness_param)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
 
         def _transcript(self, session_id: str, repo_root: str):
             harness_name, jsonl_path = _transcript_source(session_id, repo_root)

@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         agent: resolve(__dirname, 'agent.html'),
+        analytics: resolve(__dirname, 'analytics.html'),
       },
     },
   },
@@ -24,7 +25,7 @@ export default defineConfig({
         target: 'ws://localhost:8787',
         ws: true,
       },
-      '/task': 'http://localhost:8787',
+      '/analytics/files': 'http://localhost:8787',
     },
   },
 });
