@@ -24,6 +24,8 @@ export interface SessionCard {
   note_text: string | null;
   note_code: string | null;
   note_tail: string | null;
+  /** Session health score — Branch C, ADR-0016. null when jsonl unreadable. */
+  health?: HealthScore | null;
 }
 
 export interface BoardState {
@@ -94,6 +96,19 @@ export interface OkResponse {
   session_ids?: string[];
   count?: number;
   killed?: boolean;
+}
+
+// ── Health Score (Branch C, ADR-0016) ──
+
+export interface HealthScore {
+  status: 'healthy' | 'warning' | 'unhealthy';
+  stale: 'healthy' | 'warning' | 'unhealthy';
+  loop: 'healthy' | 'warning' | 'unhealthy';
+  error: 'healthy' | 'warning' | 'unhealthy';
+  stale_hrs: number;
+  loop_count: number;
+  error_count: number;
+  error_total: number;
 }
 
 export interface NotificationEvent {

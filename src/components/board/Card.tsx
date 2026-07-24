@@ -76,6 +76,13 @@ const CardImpl: FC<CardProps> = ({
       </label>
       <div className="card-top">
         <div className="card-title">{card.title || card.session_id || 'Untitled'}</div>
+        {/* Health dot — Branch C, ADR-0016: 🟢 hidden, 🟡🟡🔴 shown */}
+        {card.health && card.health.status !== 'healthy' && (
+          <span
+            className={`health-dot h-${card.health.status}`}
+            title={`Health: ${card.health.status}\nStale: ${card.health.stale} (${card.health.stale_hrs.toFixed(1)}h)\nLoop: ${card.health.loop} (max ${card.health.loop_count})\nError: ${card.health.error} (${card.health.error_count}/${card.health.error_total})`}
+          />
+        )}
         <span className={`state-badge st-${card.activity}`}>
           <span className="state-dot" />
           {card.activity}
