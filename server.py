@@ -64,6 +64,7 @@ from control_plane import (
     harness,
     lock,
     notifications,
+    pricing,
     state,
     terminal,
     ws_handler,
@@ -955,6 +956,18 @@ def main():
     args = ap.parse_args()
 
     repo_root = str(Path(args.repo).resolve())
+
+    # Load pricing.json for token→USD fallback (ADR-0014).
+    # Graceful skip: server starts without cost fallback if file is missing/invalid.
+    pricing_json_path = str(HERE / "pricing.json")
+    try:
+        pricing_table = pricing.load_pricing(pricing_json_path)
+        claude_store.set_pricing(pricing_table)
+        print(f"agent-view: pricing.json loaded ({len(pricing_table)} models)")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"agent-view: pricing.json unavailable — cost fallback disabled ({e})")
+        claude_store.set_pricing(None)
+
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(repo_root))
     print(f"agent-view: http://127.0.0.1:{args.port}  (repo={repo_root})")
     try:
