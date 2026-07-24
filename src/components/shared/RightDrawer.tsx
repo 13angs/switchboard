@@ -116,6 +116,33 @@ export const RightDrawer: FC<RightDrawerProps> = ({
               </div>
             </div>
 
+            {/* Health — Branch C, ADR-0016 */}
+            {session.health && (
+              <div className="detail-group">
+                <div className="dg-label">Health</div>
+                <div className="dg-row">
+                  <span className="k">Status</span>
+                  <span className={`v health-${session.health.status}`}>
+                    {session.health.status}
+                  </span>
+                </div>
+                <div className="dg-row">
+                  <span className="k">Stale</span>
+                  <span className="v">{session.health.stale_hrs.toFixed(1)}h</span>
+                </div>
+                <div className="dg-row">
+                  <span className="k">Loop</span>
+                  <span className="v">max {session.health.loop_count} consecutive</span>
+                </div>
+                <div className="dg-row">
+                  <span className="k">Errors</span>
+                  <span className="v">
+                    {session.health.error_count}/{session.health.error_total} turns
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Git */}
             <div className="detail-group">
               <div className="dg-label">Git</div>

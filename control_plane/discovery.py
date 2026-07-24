@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from . import agy_store, archive, claude_store, codex_store, gh, state
+from . import agy_store, archive, claude_store, codex_store, gh, health, state
 
 # --- discovery cache (ADR-0010 §1) -------------------------------------------
 
@@ -66,6 +66,8 @@ class SessionCard:
     note_tail: Optional[str] = None
     # Transcript path
     jsonl_path: Optional[str] = None
+    # Health score (Branch C, ADR-0016)
+    health: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -113,6 +115,27 @@ def _summary_to_card(s, now, archive_entries, pr_by_branch) -> SessionCard:
         note_text = "Metadata pending"
         note_tail = " — agy cache has the conversation DB but no metadata entry yet"
 
+    # Health score (Branch C, ADR-0016)
+    health_score = None
+    if s.jsonl_path:
+        hs = health.session_health(
+            jsonl_path=str(s.jsonl_path),
+            last_ts=s.last_ts.isoformat() if s.last_ts else None,
+            harness=s.harness or "claude",
+            now=now,
+        )
+        if hs is not None:
+            health_score = {
+                "status": hs.status,
+                "stale": hs.stale,
+                "loop": hs.loop,
+                "error": hs.error,
+                "stale_hrs": hs.stale_hrs,
+                "loop_count": hs.loop_count,
+                "error_count": hs.error_count,
+                "error_total": hs.error_total,
+            }
+
     return SessionCard(
         session_id=s.session_id,
         title=s.title,
@@ -135,6 +158,7 @@ def _summary_to_card(s, now, archive_entries, pr_by_branch) -> SessionCard:
         note_text=note_text,
         note_tail=note_tail,
         jsonl_path=str(s.jsonl_path) if s.jsonl_path else None,
+        health=health_score,
     )
 
 

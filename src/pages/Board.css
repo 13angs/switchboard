@@ -388,6 +388,18 @@ button.icon.on {
 .st-Idle { color: var(--muted); background: var(--idle-soft); }
 .st-Idle .state-dot { background: var(--idle); }
 
+/* ── Health dot (Branch C, ADR-0016) ── */
+
+.health-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+.health-dot.h-warning { background: #f0b332; }
+.health-dot.h-unhealthy { background: #e03e2d; }
+
 .card-sid {
   font-family: var(--mono);
   font-size: 10.5px;

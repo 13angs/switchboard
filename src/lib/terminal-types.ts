@@ -21,6 +21,8 @@ export interface SessionInfo {
   total_cost_usd: number | null;
   age: string;
   status: 'connecting' | 'connected' | 'ended' | 'waiting';
+  /** Session health score — Branch C, ADR-0016. null when jsonl unreadable. */
+  health?: import('./types').HealthScore | null;
 }
 
 /** Sample file entry for the Files panel (prototype uses static data;

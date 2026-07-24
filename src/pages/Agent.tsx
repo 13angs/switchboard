@@ -69,6 +69,7 @@ function cardToSessionInfo(c: SessionCard): SessionInfo {
     total_cost_usd: c.total_cost_usd,
     age: ago(c.last_ts),
     status: 'connecting',
+    health: c.health,
   };
 }
 
