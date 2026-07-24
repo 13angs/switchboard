@@ -111,6 +111,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
     last_role = None
     last_blurb = ""
     turns = 0
+    total_cost = None
     seen_assistant_texts: dict[str, Optional[datetime]] = {}
 
     try:
@@ -172,6 +173,14 @@ def read_session(jsonl_path: Path) -> SessionSummary:
             last_role = role
             last_blurb = text[:280]
 
+        # Capture cost from any event that carries it (envelope-level).
+        # ADR-0014 — same pattern as claude_store.py:350-353.
+        if total_cost is None and ev.get("total_cost_usd") is not None:
+            try:
+                total_cost = float(ev["total_cost_usd"])
+            except (ValueError, TypeError):
+                pass
+
     return SessionSummary(
         session_id=session_id,
         jsonl_path=jsonl_path,
@@ -184,7 +193,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
         last_stop_reason=None,
         last_blurb=last_blurb,
         turn_count=turns,
-        total_cost_usd=None,
+        total_cost_usd=total_cost,
         harness="codex",
         provider=provider,
     )

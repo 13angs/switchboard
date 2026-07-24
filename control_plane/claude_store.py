@@ -29,6 +29,17 @@ from . import config
 
 PROJECTS_DIR = config.SESSION_ROOT  # spine binding (S6); overridable via env
 
+# Pricing table injected by server.py at startup (ADR-0014).
+# None = cost fallback disabled (pricing.json missing/invalid).
+_pricing: Optional[dict[str, dict[str, float]]] = None
+
+
+def set_pricing(table: Optional[dict[str, dict[str, float]]]) -> None:
+    """Inject pricing table for token→USD fallback calculation."""
+    global _pricing
+    _pricing = table
+
+
 # Schema version this adapter was written/tested against (from event `version`).
 TESTED_VERSION = "2.1.207"  # best-effort marker; not enforced
 
@@ -311,6 +322,9 @@ def read_session(jsonl_path: Path) -> SessionSummary:
     had_error = False
     had_denials = False
     total_cost = None
+    total_input = 0
+    total_output = 0
+    model = None
 
     try:
         lines = jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -376,10 +390,33 @@ def read_session(jsonl_path: Path) -> SessionSummary:
                     "refusal",
                 ):
                     had_error = True
+                # Accumulate usage tokens for pricing fallback (ADR-0014).
+                usage = msg.get("usage") if isinstance(msg, dict) else None
+                if isinstance(usage, dict):
+                    inp = usage.get("input_tokens")
+                    out = usage.get("output_tokens")
+                    if isinstance(inp, (int, float)):
+                        total_input += int(inp)
+                    if isinstance(out, (int, float)):
+                        total_output += int(out)
+                if model is None:
+                    m = msg.get("model") if isinstance(msg, dict) else None
+                    if isinstance(m, str) and m:
+                        model = m
         elif etype == "system":
             sub = ev.get("subtype")
             if sub and "error" in str(sub).lower():
                 had_error = True
+
+    # Pricing fallback: when jsonl envelope has no total_cost_usd, compute from
+    # accumulated usage tokens × pricing.json (ADR-0014). Envelope cost is
+    # authoritative; this is fallback only.
+    if total_cost is None and _pricing is not None and model:
+        from . import pricing as _pricing_mod
+
+        total_cost = _pricing_mod.calculate_cost(
+            total_input, total_output, model, _pricing
+        )
 
     if not title:
         title = slug
