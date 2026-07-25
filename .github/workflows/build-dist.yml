@@ -4,11 +4,20 @@ name: build-dist
 # locally (Termux/PRoot on Android — see README § Running without a local
 # build) can fetch a prebuilt `dist/` instead. Also acts as the build check
 # for pull requests.
+#
+# The monthly `schedule:` run exists because artifacts expire after 30 days
+# while `scripts/fetch-dist.sh` resolves "latest successful run on main". Left
+# to pushes alone, a quiet month would break the install path the README
+# documents — for every reader, not just this repo's author. ADR-0019 records
+# that retention window as a known risk; this is the mitigation.
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 03:00 UTC on the 1st — well inside the 30-day artifact retention window.
+    - cron: '0 3 1 * *'
   workflow_dispatch:
 
 jobs:
