@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Agent View — session-centric kanban + in-browser harness terminal.
+"""Switchboard — session-centric kanban + in-browser harness terminal.
 
 Serves the kanban board + JSON API + WebSocket terminal. No daemon loop:
 the browser polls /state. Zero external dependencies (Python 3 stdlib only).
 
 Run:
-    python3 projects/agent-view/repos/agent-view/server.py [--port 8787] [--repo /workspaces/my-projects]
+    python3 projects/switchboard/repos/switchboard/server.py [--port 8787] [--repo /workspaces/my-projects]
 
 Endpoints:
     GET  /                            -> board (index.html)
@@ -97,7 +97,7 @@ def _serve_static(path: str) -> Optional[Path]:
 _registry: dict[str, terminal.PtyTerminal] = {}
 _reg_lock = threading.Lock()
 
-# Model-provider config from projects/agent-view/repos/agent-view/.env — read ONCE at start (C3).
+# Model-provider config from projects/switchboard/repos/switchboard/.env — read ONCE at start (C3).
 _ENV_FILE = config.load_env_file()
 _NOTIFICATION_HUB = notifications.NotificationHub()
 _LIFECYCLE_DETECTOR = notifications.HarnessLifecycleDetector(_NOTIFICATION_HUB.publish)
@@ -963,13 +963,13 @@ def main():
     try:
         pricing_table = pricing.load_pricing(pricing_json_path)
         claude_store.set_pricing(pricing_table)
-        print(f"agent-view: pricing.json loaded ({len(pricing_table)} models)")
+        print(f"switchboard: pricing.json loaded ({len(pricing_table)} models)")
     except (FileNotFoundError, ValueError) as e:
-        print(f"agent-view: pricing.json unavailable — cost fallback disabled ({e})")
+        print(f"switchboard: pricing.json unavailable — cost fallback disabled ({e})")
         claude_store.set_pricing(None)
 
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(repo_root))
-    print(f"agent-view: http://127.0.0.1:{args.port}  (repo={repo_root})")
+    print(f"switchboard: http://127.0.0.1:{args.port}  (repo={repo_root})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

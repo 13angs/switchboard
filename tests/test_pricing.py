@@ -2,7 +2,7 @@
 """P0#1 pricing — load pricing.json, calculate cost, schema validation.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_pricing.py
+    python3 projects/switchboard/repos/switchboard/tests/test_pricing.py
 """
 
 from __future__ import annotations

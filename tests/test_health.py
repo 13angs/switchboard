@@ -2,7 +2,7 @@
 """Branch C — session health score (3-signal graduated heuristic, ADR-0016).
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_health.py
+    python3 projects/switchboard/repos/switchboard/tests/test_health.py
 """
 
 from __future__ import annotations

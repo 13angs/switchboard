@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P1 session-lifecycle checks for Agent View terminal.PtyTerminal.
+"""P1 session-lifecycle checks for Switchboard terminal.PtyTerminal.
 
 Exercises the hard part of the in-memory registry design — the subscriber
 swap + persistent reader + specific-pid reap + terminate — WITHOUT needing the
@@ -7,8 +7,8 @@ swap + persistent reader + specific-pid reap + terminate — WITHOUT needing the
 ORCH_CLAUDE_BIN, so the whole PTY lifecycle is testable with stdlib only.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_terminal_lifecycle.py
-    # or, if pytest is available:  pytest projects/agent-view/repos/agent-view/tests
+    python3 projects/switchboard/repos/switchboard/tests/test_terminal_lifecycle.py
+    # or, if pytest is available:  pytest projects/switchboard/repos/switchboard/tests
 """
 
 from __future__ import annotations
