@@ -143,6 +143,20 @@ need — `.env` is gitignored.
 | `control_plane/` | harness stores, discovery, PTY lifecycle, config, pricing |
 | `src/`           | React + TypeScript UI (Vite)                              |
 | `tests/`         | Python regression tests                                   |
+| `docs/`          | architecture decision records + frontend architecture     |
+
+## Design records
+
+[`docs/`](docs/README.md) carries the twenty ADRs behind the choices above —
+why the harness adapter registry exists, why chat started read-only, why CI
+builds the UI instead of every host, why the project is called Switchboard.
+Each one states the options weighed and what the chosen one costs, and they are
+immutable: a decision that stops holding gets superseded by a later ADR rather
+than quietly edited.
+
+Read them if you want to know whether the design will survive your use case.
+They are also the honest record of what this project got wrong on the first
+attempt — the v1 architecture was task-centric and is gone.
 
 ## Status and support
 
