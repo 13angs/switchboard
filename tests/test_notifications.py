@@ -2,7 +2,7 @@
 """Harness approval notification checks.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_notifications.py
+    python3 projects/switchboard/repos/switchboard/tests/test_notifications.py
 """
 
 from __future__ import annotations

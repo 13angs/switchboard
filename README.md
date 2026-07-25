@@ -1,4 +1,4 @@
-# Agent View
+# Switchboard
 
 One browser board for every coding-agent session running on your machine —
 across CLI harnesses, in one place.
@@ -6,7 +6,7 @@ across CLI harnesses, in one place.
 If you run more than one agent at a time, you lose track of them. Each harness
 keeps its own session store, each terminal tab is a separate window, and
 "which of these is waiting on me?" has no answer short of checking all of them.
-Agent View reads those session stores directly, unions them into a single
+Switchboard reads those session stores directly, unions them into a single
 kanban board, and gives you an attached terminal or a readable transcript for
 any session you pick.
 
@@ -43,8 +43,8 @@ Provider tokens, if you configure extra providers, are read from a gitignored
 ## Quick start
 
 ```bash
-git clone https://github.com/13angs/agent-view.git
-cd agent-view
+git clone https://github.com/13angs/switchboard.git
+cd switchboard
 npm ci && npm run build
 python3 server.py --repo /path/to/your/repo --port 8787
 ```
@@ -92,9 +92,9 @@ PRoot's own `$HOME` (`/root`) does not. The directory must still be named
 ```bash
 TERMUX_HOME=/data/data/com.termux/files/home
 npm ci
-mkdir -p "$TERMUX_HOME/.agent-view-build"
-mv node_modules "$TERMUX_HOME/.agent-view-build/node_modules"
-ln -s "$TERMUX_HOME/.agent-view-build/node_modules" node_modules
+mkdir -p "$TERMUX_HOME/.switchboard-build"
+mv node_modules "$TERMUX_HOME/.switchboard-build/node_modules"
+ln -s "$TERMUX_HOME/.switchboard-build/node_modules" node_modules
 npm run build
 ```
 

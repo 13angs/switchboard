@@ -6,7 +6,7 @@ text frame as UTF-8") — the v2.1 WS bug. We round-trip a box-drawing char thro
 a `cat` PTY and assert it comes back intact as a binary frame.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_ws_framing.py
+    python3 projects/switchboard/repos/switchboard/tests/test_ws_framing.py
 """
 
 from __future__ import annotations

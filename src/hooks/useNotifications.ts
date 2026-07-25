@@ -19,7 +19,7 @@ function notificationCopy(event: NotificationEvent): string {
 export function useNotifications(toast: ToastFn) {
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
-  const titleRef = useRef(typeof document !== 'undefined' ? document.title : 'Agent View');
+  const titleRef = useRef(typeof document !== 'undefined' ? document.title : 'Switchboard');
 
   const unreadCount = events.length;
 

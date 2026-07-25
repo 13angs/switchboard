@@ -53,7 +53,7 @@ AGY_SESSION_ROOT = Path(
 )
 
 # --- model provider (.env) ----------------------------------------------
-# Model provider config lives in projects/agent-view/repos/agent-view/.env (gitignored) so the
+# Model provider config lives in projects/switchboard/repos/switchboard/.env (gitignored) so the
 # API key stays out of shell rc + out of git. Read once at server start.
 _ORCH_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = Path(os.environ.get("ORCH_ENV_FILE", str(_ORCH_DIR / ".env")))
@@ -129,17 +129,17 @@ def _main_checkout_env_file(orch_dir: Path) -> Path | None:
 
     Per-task worktrees do not carry gitignored files. Supported layouts:
     `<repo>/.claude/worktrees/<branch>/...` and `<repo>/.worktrees/<branch>/...`.
-    The durable local project config remains at `<repo>/projects/agent-view/repos/agent-view/.env`.
+    The durable local project config remains at `<repo>/projects/switchboard/repos/switchboard/.env`.
     """
     parts = orch_dir.resolve().parts
     for i in range(len(parts) - 1):
         if parts[i] == ".claude" and parts[i + 1] == "worktrees":
             repo_root = Path(*parts[:i])
-            candidate = repo_root / "projects" / "agent-view" / "repos" / "agent-view" / ".env"
+            candidate = repo_root / "projects" / "switchboard" / "repos" / "switchboard" / ".env"
             return candidate if candidate.is_file() else None
         if parts[i] == ".worktrees":
             repo_root = Path(*parts[:i])
-            candidate = repo_root / "projects" / "agent-view" / "repos" / "agent-view" / ".env"
+            candidate = repo_root / "projects" / "switchboard" / "repos" / "switchboard" / ".env"
             return candidate if candidate.is_file() else None
     return None
 

@@ -11,7 +11,7 @@ Contract under test (docs/design/react-architecture.md § Route Design):
   - GET /ws/terminal           -> 404 (renamed to /ws/agent, no WS redirect)
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_agent_routes.py
+    python3 projects/switchboard/repos/switchboard/tests/test_agent_routes.py
 """
 
 from __future__ import annotations

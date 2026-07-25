@@ -9,7 +9,7 @@ Covers:
   - discovery.card_for_session resolves a card directly, no full scan (F6 / ADR-0010 §2)
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_perf_caching_stores.py
+    python3 projects/switchboard/repos/switchboard/tests/test_perf_caching_stores.py
 """
 
 from __future__ import annotations

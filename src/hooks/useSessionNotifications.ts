@@ -21,7 +21,7 @@ export function useSessionNotifications(
   const [sessionAlert, setSessionAlert] = useState<SessionAlert | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
   const pendingBySessionRef = useRef<Map<string, NotificationEvent>>(new Map());
-  const baseTitle = `${titleShort} - Agent View`;
+  const baseTitle = `${titleShort} - Switchboard`;
 
   const clearAlert = useCallback(() => {
     setSessionAlert(null);

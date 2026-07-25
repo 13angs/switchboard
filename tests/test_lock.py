@@ -2,7 +2,7 @@
 """Single-writer external-holder checks.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_lock.py
+    python3 projects/switchboard/repos/switchboard/tests/test_lock.py
 """
 
 from __future__ import annotations

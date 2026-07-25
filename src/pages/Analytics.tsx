@@ -150,7 +150,7 @@ export function AnalyticsPage() {
       {/* header */}
       <header className="analytics-header">
         <div className="brand">
-          <span className="mark">Agent View</span>
+          <span className="mark">Switchboard</span>
           <span className="section">· Analytics</span>
         </div>
         <div className="repo mono">

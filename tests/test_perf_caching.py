@@ -10,7 +10,7 @@ Covers:
     in the background (F2)
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_perf_caching.py
+    python3 projects/switchboard/repos/switchboard/tests/test_perf_caching.py
 """
 
 from __future__ import annotations

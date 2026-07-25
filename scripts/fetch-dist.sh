@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-REPO="${AGENT_VIEW_REPO:-13angs/agent-view}"
+REPO="${SWITCHBOARD_REPO:-13angs/switchboard}"
 WORKFLOW="build-dist.yml"
 ARTIFACT="dist"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

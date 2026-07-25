@@ -2,7 +2,7 @@
 """Regression checks for session-scoped harness-tab notifications.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_session_tab_notifications.py
+    python3 projects/switchboard/repos/switchboard/tests/test_session_tab_notifications.py
 """
 
 from __future__ import annotations

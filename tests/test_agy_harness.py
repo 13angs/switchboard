@@ -2,7 +2,7 @@
 """agy (Antigravity CLI) harness adapter checks.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_agy_harness.py
+    python3 projects/switchboard/repos/switchboard/tests/test_agy_harness.py
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 """Codex harness adapter checks.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_codex_harness.py
+    python3 projects/switchboard/repos/switchboard/tests/test_codex_harness.py
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ export const Header: FC<HeaderProps> = ({
   return (
     <header>
       <div className="brand">
-        <span className="brand-mark">Agent View</span>
+        <span className="brand-mark">Switchboard</span>
         <span className="brand-ver">v3</span>
       </div>
       <div className="repo">

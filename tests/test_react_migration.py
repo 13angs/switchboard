@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent  # projects/agent-view/
+ROOT = HERE.parent  # projects/switchboard/
 REPO = ROOT.parent.parent  # workspace root
 sys.path.insert(0, str(ROOT))  # so `import server` and `import control_plane` work
 sys.path.insert(0, str(REPO))

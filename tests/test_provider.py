@@ -7,7 +7,7 @@ its environment + exits), so we can assert the ANTHROPIC_* overrides actually
 reach the child — no `claude` binary required.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_provider.py
+    python3 projects/switchboard/repos/switchboard/tests/test_provider.py
 """
 
 from __future__ import annotations
@@ -77,11 +77,11 @@ def test_load_env_file_falls_back_to_main_checkout_env_from_worktree():
         / "worktrees"
         / "task-x"
         / "projects"
-        / "agent-view"
+        / "switchboard"
         / "repos"
-        / "agent-view"
+        / "switchboard"
     )
-    main_orch = root / "projects" / "agent-view" / "repos" / "agent-view"
+    main_orch = root / "projects" / "switchboard" / "repos" / "switchboard"
     worktree_orch.mkdir(parents=True)
     main_orch.mkdir(parents=True)
     (main_orch / ".env").write_text(

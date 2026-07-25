@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Bulk archive/dismiss contracts for Agent View.
+"""Bulk archive/dismiss contracts for Switchboard.
 
 Run:
-    python3 projects/agent-view/repos/agent-view/tests/test_archive_batch.py
+    python3 projects/switchboard/repos/switchboard/tests/test_archive_batch.py
 """
 
 from __future__ import annotations
