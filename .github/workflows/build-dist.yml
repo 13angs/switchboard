@@ -5,24 +5,34 @@ name: build-dist
 # build) can fetch a prebuilt `dist/` instead. Also acts as the build check
 # for pull requests.
 #
-# The monthly `schedule:` run exists because artifacts expire after 30 days
-# while `scripts/fetch-dist.sh` resolves "latest successful run on main". Left
-# to pushes alone, a quiet month would break the install path the README
-# documents — for every reader, not just this repo's author. ADR-0019 records
-# that retention window as a known risk; this is the mitigation.
+# Two consumers, deliberately split into two jobs:
+#
+#   build    — every push and PR. Uploads a workflow artifact, which is the
+#              pull-request build check and the `fetch-dist.sh <run-id>`
+#              escape hatch for pinning a specific build. Read-only token.
+#   publish  — main only. Replaces the asset on the rolling `dist` release,
+#              which is what `fetch-dist.sh` installs by default. Needs a
+#              write token, so it is scoped to its own job (ADR-0021).
+#
+# Artifacts expire; release assets do not. The monthly `schedule:` therefore no
+# longer keeps delivery alive — it just keeps the published asset current with
+# main — and the retention window below is now only about the pin-a-run path.
 
 on:
   push:
     branches: [main]
   pull_request:
   schedule:
-    # 03:00 UTC on the 1st — well inside the 30-day artifact retention window.
+    # 03:00 UTC on the 1st. Delivery no longer depends on this run (ADR-0021);
+    # it keeps the published asset from drifting far behind main.
     - cron: '0 3 1 * *'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -42,5 +52,58 @@ jobs:
         with:
           name: dist
           path: dist/
-          retention-days: 30
+          # 90 is GitHub's maximum for a public repo. Only the
+          # `fetch-dist.sh <run-id>` pin path depends on this now.
+          retention-days: 90
           if-no-files-found: error
+
+  publish:
+    # Never on pull_request: a fork PR must not be able to overwrite the asset
+    # that constrained hosts install, and the ref guard keeps a dispatch from a
+    # side branch from publishing either.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the built bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Pack the bundle
+        # Members are `./index.html`, `./assets/...` — fetch-dist.sh extracts
+        # into a staging dir and expects index.html at its top level.
+        run: |
+          test -f dist/index.html
+          tar -czf dist.tar.gz -C dist .
+
+      - name: Publish to the rolling `dist` release
+        run: |
+          notes="Prebuilt UI bundle for hosts that cannot run the Vite toolchain.
+
+          Rolling build of \`main\` — **not a version**. The \`dist\` tag is fixed and
+          the asset is replaced on every \`main\` build; treat \`main\` as the only
+          supported version, per the README.
+
+          Built from ${GITHUB_SHA} on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+          Install: \`scripts/fetch-dist.sh\` (no \`gh\` or GitHub account needed).
+          Design record: \`docs/adr/0021-rolling-dist-release-asset.md\`."
+
+          if gh release view dist >/dev/null 2>&1; then
+            gh release edit dist --notes "$notes"
+          else
+            gh release create dist \
+              --title "dist — rolling prebuilt UI" \
+              --notes "$notes" \
+              --target "$GITHUB_SHA"
+          fi
+
+          gh release upload dist dist.tar.gz --clobber

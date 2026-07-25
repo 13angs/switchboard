@@ -78,10 +78,21 @@ scripts/fetch-dist.sh
 python3 server.py --repo /path/to/your/repo --port 8787
 ```
 
-`scripts/fetch-dist.sh` pulls the `dist` artifact from the latest successful
-[`build-dist`](.github/workflows/build-dist.yml) run on `main` via `gh`, so the
-machine needs `gh` authenticated but no Node toolchain. Pass a run id to pin a
-specific build (`scripts/fetch-dist.sh 123456789`).
+`scripts/fetch-dist.sh` downloads the bundle attached to the rolling
+[`dist` release](../../releases/tag/dist), which
+[`build-dist`](.github/workflows/build-dist.yml) replaces on every `main` build.
+The machine needs `curl` and no Node toolchain — no `gh`, no GitHub account. If
+you would rather not run a script, the asset is a plain URL:
+
+```bash
+mkdir -p dist
+curl -fsSL https://github.com/13angs/switchboard/releases/download/dist/dist.tar.gz \
+  | tar -xz -C dist
+```
+
+To pin or bisect an older build, pass a `build-dist` run id
+(`scripts/fetch-dist.sh 123456789`). That path reads a workflow artifact, which
+is behind an authenticated API even on a public repo, so it does need `gh`.
 
 If you do need to build on-device, move `node_modules` under a path the Android
 linker permits and symlink it back in. Termux's home (`/data/…`) qualifies;
@@ -165,6 +176,11 @@ and changes when my workflow does — treat `main` as the only supported
 version. Issues are closed and I am not taking feature requests; forks and
 patches for your own setup are very welcome, and that is the intended way to
 use this.
+
+The one release, tagged `dist`, is not a version. It is a fixed tag whose
+attached bundle is overwritten by every `main` build, so that hosts which
+cannot build the UI have somewhere permanent to fetch it from. There are no
+version tags and there will not be any.
 
 ## License
 
