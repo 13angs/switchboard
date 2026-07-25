@@ -2,8 +2,10 @@
 # Holds ORCH_DEEPSEEK_AUTH_TOKEN etc. Copy .env.example → .env and fill in.
 .env
 
-# React UI build artifacts
-node_modules/
+# React UI build artifacts.
+# No trailing slash: on Termux/PRoot `node_modules` is a symlink into an
+# Android-linker-permitted path, and `node_modules/` would not match it.
+node_modules
 dist/
 
 # Python test/runtime artifacts
