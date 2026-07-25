@@ -1,0 +1,40 @@
+name: ci
+
+# Backend regression tests. Deliberately separate from `build-dist.yml`: that
+# workflow's artifact is a distribution channel (scripts/fetch-dist.sh consumes
+# it), so a failing Python test must not stop a good UI bundle from being
+# published.
+#
+# The backend is stdlib-only by design, so there is no requirements file —
+# pytest is pinned here instead, to keep a pytest major release from turning CI
+# red on its own.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor `tests/test_stdlib_purity.py` needs
+        # (`sys.stdlib_module_names`); 3.13 is the version the ADR-0019
+        # verification ran on.
+        python-version: ['3.10', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: pip install 'pytest~=8.3'
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
