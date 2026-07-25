@@ -51,8 +51,10 @@ python3 server.py --repo /path/to/your/repo --port 8787
 
 Open `http://127.0.0.1:8787`.
 
-`server.py` needs Python 3 and nothing else. Env overrides for the flags:
-`ORCH_PORT`, `ORCH_REPO`, `ORCH_ENV_FILE`.
+`server.py` needs Python **3.10 or newer** and nothing else — no pip install, no
+virtualenv. CI runs the test suite on 3.10 and 3.13, so those are the two the
+floor is actually measured against. Env overrides for the flags: `ORCH_PORT`,
+`ORCH_REPO`, `ORCH_ENV_FILE`.
 
 ### Running without a local build
 
