@@ -58,6 +58,22 @@ class FakeSub:
         self.exit_code = code
         self.got_exit.set()
 
+    def wait_for(self, needle: bytes, timeout: float = 5.0) -> bool:
+        """Wait until `needle` is present in everything received so far.
+
+        A PTY is a byte stream with no message boundaries, so one on_data
+        callback is not guaranteed to carry a whole echo. Waiting on the
+        first data event and asserting immediately races the tail — that
+        produced an intermittent `b'ping' in bytearray(b'pin')` failure
+        roughly one full-suite run in three.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if needle in self.data:
+                return True
+            time.sleep(0.02)
+        return needle in self.data
+
 
 def _spawn():
     closed = {"term": None}
@@ -75,8 +91,9 @@ def test_reconnect_survives_detach_then_kill_cleans_up():
         sub1 = FakeSub()
         term.attach(sub1)
         term.write(b"ping\n")
-        assert sub1.got_data.wait(5), "no PTY output to first subscriber"
-        assert b"ping" in sub1.data
+        assert sub1.wait_for(b"ping"), (
+            f"no complete PTY echo to first subscriber: {bytes(sub1.data)!r}"
+        )
         assert term.is_alive()
 
         # detach — PTY must survive
@@ -88,8 +105,9 @@ def test_reconnect_survives_detach_then_kill_cleans_up():
         sub2 = FakeSub()
         term.attach(sub2)
         term.write(b"pong\n")
-        assert sub2.got_data.wait(5), "reconnected subscriber got no output"
-        assert b"pong" in sub2.data
+        assert sub2.wait_for(b"pong"), (
+            f"reconnected subscriber got no complete echo: {bytes(sub2.data)!r}"
+        )
         assert b"ping" not in sub2.data, "unexpected replay to reconnected sub"
 
         # kill — child dies, reader reaps, on_close + on_exit fire
@@ -111,8 +129,9 @@ def test_detach_guard_ignores_stale_subscriber():
         term.attach(new)  # `new` is now current
         term.detach(old)  # stale detach — should be a no-op
         term.write(b"live\n")
-        assert new.got_data.wait(5), "current subscriber wrongly detached"
-        assert b"live" in new.data
+        assert new.wait_for(b"live"), (
+            f"current subscriber wrongly detached: {bytes(new.data)!r}"
+        )
     finally:
         term.terminate()
 
