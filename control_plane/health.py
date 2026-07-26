@@ -5,15 +5,20 @@ Computes 3 signals (stale / loop / error) → 3-tier score (🟢 healthy / 🟡 
 
 Read from jsonl transcript; zero new dependencies. Health is computed server-side
 during the /state poll — no new endpoint needed.
+
+Message reads go through the harness's own store reader (ADR-0016 §SD1) so that
+harness-specific envelope quirks stay in one place.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from pathlib import Path
+from typing import Callable, List, Optional
+
+from . import agy_store, claude_store, codex_store
 
 
 @dataclass
@@ -56,8 +61,8 @@ def session_health(
 
     Signals:
       - stale: computed from last_ts vs now (no file read needed)
-      - loop: max consecutive same-tool in last 20 assistant messages
-      - error: count of error/refusal stop_reasons in last 10 turns
+      - loop: max consecutive same-tool over the last 20 main-thread turns
+      - error: count of error/refusal stop_reasons in the last 10 assistant turns
 
     Overall status = worst of (stale, loop, error).
     """
@@ -68,7 +73,7 @@ def session_health(
     stale, stale_hrs = _compute_stale(last_ts, now)
 
     # --- Read messages for loop + error -------------------------------------
-    messages = _read_messages(jsonl_path, limit=20)
+    messages = _read_messages(jsonl_path, harness, limit=20)
     if messages is None:
         return None  # unreadable
 
@@ -237,29 +242,44 @@ def _extract_tool_name(msg: dict) -> Optional[str]:
     return None
 
 
-def _read_messages(jsonl_path: str, limit: int = 20) -> Optional[List[dict]]:
-    """Read last `limit` messages from a jsonl file. Returns None if unreadable."""
+# Per-harness message reader (ADR-0016 §SD1 — reuse the store parser rather than
+# re-implementing jsonl parsing). The *rich* reader is the one used on purpose:
+# the non-rich reader flattens each turn to {role, text, ts} and drops
+# `stop_reason`, which the error signal needs, and the `tool_use` blocks the loop
+# signal prefers over the §SD4 text heuristic.
+_READERS: dict[str, Callable[..., List[dict]]] = {
+    "claude": claude_store.read_messages_rich,
+    "codex": codex_store.read_messages_rich,
+    "agy": agy_store.read_messages_rich,
+}
+
+
+def _read_messages(
+    jsonl_path: str,
+    harness: str,
+    limit: int = 20,
+) -> Optional[List[dict]]:
+    """Read the last `limit` main-thread turns via the harness's store reader.
+
+    Returns None when the transcript is missing/unreadable (caller maps that to
+    "no health"), or [] for an unknown harness so the stale signal still scores.
+
+    Each entry is {role, ts, content: [blocks], stop_reason?, model?, usage?} —
+    `role` is 'user'|'assistant' and sidechain (sub-agent) turns are excluded by
+    the store readers. Note agy transcripts carry no stop_reason (ADR-0011
+    fidelity limit), so the error signal stays healthy for that harness.
+    """
     if not os.path.isfile(jsonl_path):
         return None
 
+    reader = _READERS.get(harness)
+    if reader is None:
+        return []
+
     try:
-        with open(jsonl_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except (OSError, IOError):
+        return reader(Path(jsonl_path), limit=limit)
+    except OSError:
         return None
-
-    messages = []
-    # Read up to `limit` from the end (non-rich parse — performance per ADR-0016 §SD1)
-    for line in lines[-limit:]:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            messages.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-
-    return messages
 
 
 def _worst(a: str, b: str) -> str:
