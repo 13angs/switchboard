@@ -48,6 +48,12 @@ class SessionCard:
     turn_count: int
     git_branch: Optional[str]
     total_cost_usd: Optional[float]
+    # Cost state (ADR-0022 §SD2/§SD4). `unpriced_models` non-empty with a null
+    # total means the board renders `unpriced` — distinct from both a figure
+    # and `$0.00`. With a total, it means the figure is a priced subtotal and
+    # `cost_partial` is set.
+    cost_partial: bool = False
+    unpriced_models: Optional[List[str]] = None
     harness: Optional[str] = "claude"
     provider: Optional[str] = "claude"
     worktree_path: Optional[str] = None
@@ -145,6 +151,10 @@ def _summary_to_card(s, now, archive_entries, pr_by_branch) -> SessionCard:
         turn_count=s.turn_count,
         git_branch=s.git_branch,
         total_cost_usd=s.total_cost_usd,
+        # getattr: codex/agy build the shared SessionSummary but predate these
+        # fields on their own construction paths.
+        cost_partial=bool(getattr(s, "cost_partial", False)),
+        unpriced_models=list(getattr(s, "unpriced_models", None) or []),
         harness=s.harness,
         provider=s.provider,
         worktree_path=s.cwd,

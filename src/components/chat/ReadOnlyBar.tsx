@@ -1,11 +1,14 @@
 import type { FC } from 'react';
-import { costStr } from '../../lib/format';
+import { costDisplay } from '../../lib/format';
 
 interface ReadOnlyBarProps {
   state: 'connecting' | 'loading' | 'ended' | 'error' | 'ready' | 'working' | null;
   sessionId: string | null;
-  /** Session running cost — hidden when null (ADR-0007). */
+  /** Session running cost — hidden when there is no usage data (ADR-0007).
+   *  Renders `unpriced` when usage exists but no model had a rate (ADR-0022). */
   costUsd?: number | null;
+  costPartial?: boolean;
+  unpricedModels?: string[] | null;
   /** Download the transcript as markdown; button hidden when absent (ADR-0007). */
   onExport?: () => void;
   onSwitchToTerminal: () => void;
@@ -15,6 +18,8 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
   state,
   sessionId,
   costUsd,
+  costPartial,
+  unpricedModels,
   onExport,
   onSwitchToTerminal,
 }) => {
@@ -70,7 +75,7 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
     }
   };
 
-  const cost = costStr(costUsd); // '' when null/undefined → hidden
+  const cost = costDisplay(costUsd, costPartial, unpricedModels); // null → hidden
 
   return (
     <div className="readonly-bar">
@@ -78,8 +83,11 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
       {(cost || onExport) && (
         <span className="ro-right">
           {cost && (
-            <span className="ro-cost" title="Session cost (USD)">
-              {cost}
+            <span
+              className={`ro-cost${cost.unpriced ? ' cost-unpriced' : ''}`}
+              title={cost.title}
+            >
+              {cost.text}
             </span>
           )}
           {onExport && (

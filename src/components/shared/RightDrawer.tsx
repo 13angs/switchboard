@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import type { RightDrawerProps } from '../../lib/terminal-types';
 import { PRPill } from './PRPill';
-import { costStr } from '../../lib/format';
+import { costDisplay } from '../../lib/format';
 import { mergePullRequests, sessionPullRequest } from '../../lib/prs';
 
 function providerLabel(provider: string): string {
@@ -108,7 +108,21 @@ export const RightDrawer: FC<RightDrawerProps> = ({
               </div>
               <div className="dg-row">
                 <span className="k">Cost</span>
-                <span className="v">{costStr(session.total_cost_usd) || '—'}</span>
+                {(() => {
+                  const cost = costDisplay(
+                    session.total_cost_usd,
+                    session.cost_partial,
+                    session.unpriced_models,
+                  );
+                  return (
+                    <span
+                      className={`v${cost?.unpriced ? ' cost-unpriced' : ''}`}
+                      title={cost?.title}
+                    >
+                      {cost?.text ?? '—'}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="dg-row">
                 <span className="k">Age</span>

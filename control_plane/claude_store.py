@@ -25,19 +25,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import config
+from . import config, pricing
 
 PROJECTS_DIR = config.SESSION_ROOT  # spine binding (S6); overridable via env
 
-# Pricing table injected by server.py at startup (ADR-0014).
-# None = cost fallback disabled (pricing.json missing/invalid).
-_pricing: Optional[dict[str, dict[str, float]]] = None
+# Pricing registry injected by server.py at startup (ADR-0022, was ADR-0014).
+# None = cost disabled (pricing.json missing/invalid).
+_pricing: Optional[pricing.PricingRegistry] = None
 
 
-def set_pricing(table: Optional[dict[str, dict[str, float]]]) -> None:
-    """Inject pricing table for token→USD fallback calculation."""
+def set_pricing(registry: Optional[pricing.PricingRegistry]) -> None:
+    """Inject the pricing registry for token→USD calculation."""
     global _pricing
-    _pricing = table
+    _pricing = registry
 
 
 # Schema version this adapter was written/tested against (from event `version`).
@@ -282,6 +282,39 @@ def _content_blocks(content) -> list[dict]:
     return blocks
 
 
+def _token_count(value: object) -> int:
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def _usage_from_message(usage: dict) -> pricing.TokenUsage:
+    """Map one claude `message.usage` block onto billable token classes.
+
+    The cache-write TTL split lives in `usage.cache_creation`
+    (`ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`) and is present on
+    every assistant event in the local store, so ADR-0022 §SD3 prices writes
+    exactly rather than blending. Transcripts that predate the split carry only
+    the flat `cache_creation_input_tokens`; those fall back to the 5-minute
+    rate — the cheaper of the two, so a missing split never inflates a figure.
+
+    `usage.iterations[]` restates the same counts for multi-iteration turns and
+    is deliberately not read: the top-level block is already the turn total.
+    """
+    write_5m = write_1h = 0
+    split = usage.get("cache_creation")
+    if isinstance(split, dict):
+        write_5m = _token_count(split.get("ephemeral_5m_input_tokens"))
+        write_1h = _token_count(split.get("ephemeral_1h_input_tokens"))
+    if write_5m == 0 and write_1h == 0:
+        write_5m = _token_count(usage.get("cache_creation_input_tokens"))
+    return pricing.TokenUsage(
+        input_tokens=_token_count(usage.get("input_tokens")),
+        output_tokens=_token_count(usage.get("output_tokens")),
+        cache_write_5m=write_5m,
+        cache_write_1h=write_1h,
+        cache_read=_token_count(usage.get("cache_read_input_tokens")),
+    )
+
+
 @dataclass
 class SessionSummary:
     session_id: Optional[str]
@@ -297,7 +330,14 @@ class SessionSummary:
     turn_count: int = 0  # user+assistant events (main thread only)
     had_error: bool = False  # any system/assistant error seen late
     permission_denials: bool = False  # any permission_denials in session
-    total_cost_usd: Optional[float] = None  # total_cost_usd from json envelope
+    total_cost_usd: Optional[float] = None  # envelope cost, else token-derived
+    # Cost state beyond the number (ADR-0022 §SD2/§SD4). A session mixing a
+    # priced and an unpriced model reports the priced subtotal with
+    # cost_partial=True; one with no priceable model at all reports
+    # total_cost_usd=None with unpriced_models non-empty. "We have no rate" and
+    # "this cost nothing" must not share a cell.
+    cost_partial: bool = False
+    unpriced_models: list[str] = field(default_factory=list)
     harness: str = "claude"
     provider: Optional[str] = "claude"
 
@@ -322,9 +362,10 @@ def read_session(jsonl_path: Path) -> SessionSummary:
     had_error = False
     had_denials = False
     total_cost = None
-    total_input = 0
-    total_output = 0
-    model = None
+    # Per model id, not per session (ADR-0022 §SD4): a session that starts on
+    # one model and continues on a pricier one must not bill the whole run at
+    # the first model's rate.
+    usage_by_model: dict[str, pricing.TokenUsage] = {}
 
     try:
         lines = jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -390,33 +431,45 @@ def read_session(jsonl_path: Path) -> SessionSummary:
                     "refusal",
                 ):
                     had_error = True
-                # Accumulate usage tokens for pricing fallback (ADR-0014).
+                # Accumulate billable tokens per model id (ADR-0022 §SD3/§SD4).
+                # '<synthetic>' marks a locally-generated turn — no provider
+                # call was made, so it is never billed.
                 usage = msg.get("usage") if isinstance(msg, dict) else None
-                if isinstance(usage, dict):
-                    inp = usage.get("input_tokens")
-                    out = usage.get("output_tokens")
-                    if isinstance(inp, (int, float)):
-                        total_input += int(inp)
-                    if isinstance(out, (int, float)):
-                        total_output += int(out)
-                if model is None:
-                    m = msg.get("model") if isinstance(msg, dict) else None
-                    if isinstance(m, str) and m:
-                        model = m
+                model_id = msg.get("model") if isinstance(msg, dict) else None
+                if (
+                    isinstance(usage, dict)
+                    and isinstance(model_id, str)
+                    and model_id
+                    and model_id != "<synthetic>"
+                ):
+                    usage_by_model[model_id] = usage_by_model.get(
+                        model_id, pricing.TokenUsage()
+                    ) + _usage_from_message(usage)
         elif etype == "system":
             sub = ev.get("subtype")
             if sub and "error" in str(sub).lower():
                 had_error = True
 
-    # Pricing fallback: when jsonl envelope has no total_cost_usd, compute from
-    # accumulated usage tokens × pricing.json (ADR-0014). Envelope cost is
-    # authoritative; this is fallback only.
-    if total_cost is None and _pricing is not None and model:
-        from . import pricing as _pricing_mod
-
-        total_cost = _pricing_mod.calculate_cost(
-            total_input, total_output, model, _pricing
-        )
+    # Cost basis (ADR-0022 §SD1): token-derived is the primary path — no claude
+    # assistant event carries an envelope total_cost_usd. The envelope read
+    # above stays as an override for harnesses that do supply one.
+    cost_partial = False
+    unpriced_models: list[str] = []
+    if total_cost is None and _pricing is not None and usage_by_model:
+        priced_total = 0.0
+        priced_any = False
+        for model_id in sorted(usage_by_model):
+            model_cost = pricing.calculate_cost(
+                usage_by_model[model_id], model_id, _pricing
+            )
+            if model_cost is None:
+                unpriced_models.append(model_id)
+            else:
+                priced_total += model_cost
+                priced_any = True
+        if priced_any:
+            total_cost = priced_total
+            cost_partial = bool(unpriced_models)
 
     if not title:
         title = slug
@@ -435,6 +488,8 @@ def read_session(jsonl_path: Path) -> SessionSummary:
         had_error=had_error,
         permission_denials=had_denials,
         total_cost_usd=total_cost,
+        cost_partial=cost_partial,
+        unpriced_models=unpriced_models,
     )
 
 

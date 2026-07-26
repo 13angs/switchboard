@@ -1,6 +1,6 @@
 import { memo, type FC } from 'react';
 import type { SessionCard } from '../../lib/types';
-import { ago, costStr, sidShort } from '../../lib/format';
+import { ago, costDisplay, sidShort } from '../../lib/format';
 
 interface CardProps {
   card: SessionCard;
@@ -49,7 +49,7 @@ const CardImpl: FC<CardProps> = ({
 }) => {
   const sid = sidShort(card.session_id);
   const age = ago(card.last_ts);
-  const cost = costStr(card.total_cost_usd);
+  const cost = costDisplay(card.total_cost_usd, card.cost_partial, card.unpriced_models);
   const isMerged = !!card.merged_pr;
 
   return (
@@ -99,9 +99,11 @@ const CardImpl: FC<CardProps> = ({
           <span className="meta-val tnum">{card.turn_count}</span>
         </span>
         {cost && (
-          <span className="meta-field">
+          <span className="meta-field" title={cost.title}>
             <span className="meta-key">cost</span>
-            <span className="meta-val tnum">{cost}</span>
+            <span className={`meta-val tnum${cost.unpriced ? ' cost-unpriced' : ''}`}>
+              {cost.text}
+            </span>
           </span>
         )}
       </div>
