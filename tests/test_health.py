@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,13 +21,34 @@ from control_plane import health  # noqa: E402
 
 # --- Helpers ----------------------------------------------------------------
 
+# Loop/error fixtures pin `now` an hour past `last_ts` so the stale signal stays
+# healthy. ADR-0016 §SD1 skips the message scan once stale is unhealthy, so a
+# wall-clock `now` would silently short-circuit the very signal under test —
+# which is exactly what these tests did before they read a real envelope.
+_LAST_TS = "2026-07-25T00:00:00Z"
+_NOW = datetime(2026, 7, 25, 1, 0, tzinfo=timezone.utc)
+
 
 def _write_jsonl(path: str, messages: list[dict]) -> None:
-    """Write a list of message dicts as a jsonl file."""
+    """Write message bodies as real Claude Code transcript events.
+
+    Each input dict is the *message body* ({role, content, stop_reason?}). The
+    envelope Claude Code actually writes puts `type` at the top level and nests
+    that body under `message`. Fixtures that omitted the wrapper are why this
+    suite passed against a parser production never exercised — see
+    tests/test_transcript_contract.py, which asserts the shape against the real
+    session store.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    base = datetime(2026, 7, 25, tzinfo=timezone.utc)
     with open(path, "w") as f:
-        for msg in messages:
-            f.write(json.dumps(msg) + "\n")
+        for i, msg in enumerate(messages):
+            event = {
+                "type": msg["role"],
+                "timestamp": (base + timedelta(seconds=i)).isoformat(),
+                "message": dict(msg),
+            }
+            f.write(json.dumps(event) + "\n")
 
 
 # --- Test: HealthScore dataclass --------------------------------------------
@@ -143,7 +164,7 @@ def test_loop_no_consecutive_same_tool(tmp_path):
     p = tmp_path / "no_loop.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.loop == "healthy"
@@ -164,7 +185,7 @@ def test_loop_5_consecutive_same_tool(tmp_path):
     p = tmp_path / "loop5.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.loop == "warning"  # 7 ≥ 5 → warning
@@ -185,7 +206,7 @@ def test_loop_10_consecutive_same_tool(tmp_path):
     p = tmp_path / "loop10.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.loop == "unhealthy"  # 12 ≥ 10 → unhealthy
@@ -223,7 +244,7 @@ def test_loop_fallback_text_heuristic(tmp_path):
     p = tmp_path / "loop_text.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     # First 5 = Read → run of 5 = warning
@@ -251,7 +272,7 @@ def test_error_no_errors(tmp_path):
     p = tmp_path / "no_error.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.error == "healthy"
@@ -273,7 +294,7 @@ def test_error_3_of_last_10(tmp_path):
     p = tmp_path / "error3.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.error == "warning"
@@ -296,7 +317,7 @@ def test_error_5_of_last_10(tmp_path):
     p = tmp_path / "error5.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     assert result.error == "unhealthy"
@@ -326,7 +347,7 @@ def test_error_refusal_counts(tmp_path):
     p = tmp_path / "error_refusal.jsonl"
     _write_jsonl(p, msgs)
     result = health.session_health(
-        str(p), last_ts="2026-07-25T00:00:00Z", harness="claude"
+        str(p), last_ts=_LAST_TS, harness="claude", now=_NOW
     )
     assert result is not None
     # 3 refusals out of 8 = 37.5% < 50% → warning (not unhealthy)
