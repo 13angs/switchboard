@@ -67,6 +67,8 @@ function cardToSessionInfo(c: SessionCard): SessionInfo {
     auto_archived: Boolean(c.auto_archived),
     turn_count: c.turn_count,
     total_cost_usd: c.total_cost_usd,
+    cost_partial: c.cost_partial,
+    unpriced_models: c.unpriced_models,
     age: ago(c.last_ts),
     status: 'connecting',
     health: c.health,
@@ -557,6 +559,8 @@ export function AgentPage() {
                 state={typing ? 'working' : ended ? 'ended' : chatState}
                 sessionId={sessionId}
                 costUsd={displaySession.total_cost_usd}
+                costPartial={displaySession.cost_partial}
+                unpricedModels={displaySession.unpriced_models}
                 onExport={messages.length > 0 ? handleExport : undefined}
                 onSwitchToTerminal={() => switchAgentView('terminal')}
               />

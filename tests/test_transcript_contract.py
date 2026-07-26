@@ -188,40 +188,83 @@ def _observed_models(transcripts: list[Path]) -> set[str]:
     return models
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ADR-0014 model-id drift: pricing.json is keyed on ids no local session "
-        "reports, so cost is None for most cards. Fix is the ADR-0014 delta "
-        "(family matching + drift guard); delete this marker when it lands."
-    ),
-)
-def test_pricing_registry_covers_observed_models(transcripts):
-    """Every model id a real session reports must be priceable.
+# Models we knowingly cannot price. ADR-0022 § Consequences: non-Anthropic cache
+# ratios are not assumed and deepseek's rates are not to hand, so a session using
+# it renders `unpriced` rather than a guess. Anything NOT listed here that the
+# store reports is drift, and the assertion below is where it surfaces.
+KNOWN_UNPRICED = {"deepseek-v4-pro"}
 
-    `calculate_cost()` looks the id up exactly, so an id missing here is a
-    silently blank cost on the board, not an error.
+
+def test_pricing_registry_covers_observed_models(transcripts):
+    """Every model id a real session reports must be priceable, or declared.
+
+    `rate_for()` resolves the id exactly or through a declared alias — never by
+    prefix — so an id missing from both is a card that renders `unpriced`, not
+    an error. This is the test-time half of the ADR-0022 §SD2 drift guard; the
+    runtime half logs once per unknown id at /state build time.
     """
-    table = pricing.load_pricing(str(REPO_ROOT / "pricing.json"))
+    registry = pricing.load_pricing(str(REPO_ROOT / "pricing.json"))
     observed = _observed_models(transcripts)
     if not observed:
         pytest.skip("no model ids in the session store")
 
-    missing = sorted(observed - set(table))
+    missing = sorted(
+        m for m in observed if m not in KNOWN_UNPRICED and registry.rate_for(m) is None
+    )
     assert not missing, (
-        f"pricing.json prices {len(table)} models but cannot price "
-        f"{len(missing)} of {len(observed)} in use: {missing}"
+        f"pricing.json prices {len(registry)} models but cannot price "
+        f"{len(missing)} of {len(observed)} in use: {missing}. Add a rate, or an "
+        f"alias to an existing key, or list it in KNOWN_UNPRICED with a reason."
     )
 
 
 def test_pricing_registry_is_loadable():
     """The committed registry must parse — a broken file disables cost silently."""
-    table = pricing.load_pricing(str(REPO_ROOT / "pricing.json"))
-    assert table, "pricing.json parsed to an empty table"
-    for model_id, prices in table.items():
-        assert prices["input"] >= 0 and prices["output"] >= 0, (
+    registry = pricing.load_pricing(str(REPO_ROOT / "pricing.json"))
+    assert registry.models, "pricing.json parsed to an empty table"
+    for model_id, rate in registry.models.items():
+        assert rate.input >= 0 and rate.output >= 0, (
             f"pricing.json {model_id} has a negative price"
         )
+        assert rate.cache.read > 0 and rate.cache.write_5m > 0, (
+            f"pricing.json {model_id} zeroes a cache multiplier — cache tokens "
+            f"are most of the bill, so a 0 ratio silently understates every session"
+        )
+
+
+def test_assistant_usage_carries_the_cache_ttl_split(transcripts):
+    """ADR-0022 §SD3 prices cache writes exactly, using `usage.cache_creation`.
+
+    Lose the split and writes fall back to the 5-minute rate — a silent
+    understatement for any session on a 1-hour cache, which is what this
+    workspace runs. The fallback is deliberate, so this test guards the *reason*
+    it should stay unused rather than the fallback itself.
+    """
+    seen = split_present = 0
+    for path in transcripts:
+        for ev in _events(path):
+            if ev.get("type") != "assistant" or ev.get("isSidechain"):
+                continue
+            msg = ev.get("message") or {}
+            if not isinstance(msg, dict) or msg.get("model") == "<synthetic>":
+                continue
+            usage = msg.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            seen += 1
+            split = usage.get("cache_creation")
+            if isinstance(split, dict) and (
+                "ephemeral_5m_input_tokens" in split
+                or "ephemeral_1h_input_tokens" in split
+            ):
+                split_present += 1
+
+    if seen < _MIN_LINES:
+        pytest.skip(f"only {seen} usage blocks in the store — too few to assert on")
+    assert split_present == seen, (
+        f"{seen - split_present} of {seen} usage blocks have no cache_creation TTL "
+        f"split — cache-write cost degrades to the 5m rate for those turns"
+    )
 
 
 if __name__ == "__main__":

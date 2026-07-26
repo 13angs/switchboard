@@ -19,6 +19,9 @@ export interface SessionInfo {
   auto_archived: boolean;
   turn_count: number;
   total_cost_usd: number | null;
+  /** Cost state — ADR-0022 §SD2/§SD4. See SessionCard for the full contract. */
+  cost_partial?: boolean;
+  unpriced_models?: string[] | null;
   age: string;
   status: 'connecting' | 'connected' | 'ended' | 'waiting';
   /** Session health score — Branch C, ADR-0016. null when jsonl unreadable. */

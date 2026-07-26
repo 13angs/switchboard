@@ -141,3 +141,12 @@ body {
   letter-spacing: 0.12em;
   color: var(--faint);
 }
+
+/* `unpriced` = no rate for this session's model, which is a different fact from
+   $0.00 (ADR-0022 §SD2). Dimmed + italic so it never reads as a dollar figure
+   at a glance. Global: the cost slot appears on the board card, the right
+   drawer, and the chat read-only bar. */
+.cost-unpriced {
+  color: var(--faint);
+  font-style: italic;
+}

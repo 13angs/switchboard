@@ -9,6 +9,12 @@ export interface SessionCard {
   last_ts: string | null;
   turn_count: number;
   total_cost_usd: number | null;
+  /** Cost is a priced subtotal — at least one model in the session had no rate.
+   *  ADR-0022 §SD4. */
+  cost_partial?: boolean;
+  /** Model ids the registry could not price. Non-empty with a null cost means
+   *  `unpriced`, which is not `$0.00`. ADR-0022 §SD2. */
+  unpriced_models?: string[] | null;
   pr_number: number | null;
   pr_url: string | null;
   pr_state: string | null;

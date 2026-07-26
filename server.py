@@ -957,15 +957,16 @@ def main():
 
     repo_root = str(Path(args.repo).resolve())
 
-    # Load pricing.json for token→USD fallback (ADR-0014).
-    # Graceful skip: server starts without cost fallback if file is missing/invalid.
+    # Load pricing.json for token→USD cost (ADR-0022 §SD1 — the primary path,
+    # not a fallback). Graceful skip: the server starts with cost disabled if
+    # the file is missing or invalid, rather than pricing everything to None.
     pricing_json_path = str(HERE / "pricing.json")
     try:
-        pricing_table = pricing.load_pricing(pricing_json_path)
-        claude_store.set_pricing(pricing_table)
-        print(f"switchboard: pricing.json loaded ({len(pricing_table)} models)")
+        pricing_registry = pricing.load_pricing(pricing_json_path)
+        claude_store.set_pricing(pricing_registry)
+        print(f"switchboard: pricing.json loaded ({len(pricing_registry)} models)")
     except (FileNotFoundError, ValueError) as e:
-        print(f"switchboard: pricing.json unavailable — cost fallback disabled ({e})")
+        print(f"switchboard: pricing.json unavailable — cost disabled ({e})")
         claude_store.set_pricing(None)
 
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(repo_root))
