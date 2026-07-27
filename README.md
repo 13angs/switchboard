@@ -111,6 +111,16 @@ ln -s "$TERMUX_HOME/.switchboard-build/node_modules" node_modules
 npm run build
 ```
 
+### What the store cost
+
+```bash
+python3 scripts/price_store.py
+```
+
+Prints per-session cost, the store total, and any model the rate card cannot
+price. Same code path the board renders from — so it is also the way to check a
+cost figure quoted in a design doc without opening the UI.
+
 ## Supported harnesses
 
 **+ New session** in the header asks for a harness, then a provider.

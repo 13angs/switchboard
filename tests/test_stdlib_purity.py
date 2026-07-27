@@ -8,8 +8,9 @@ on — they run `python3 server.py` with no install step. A single stray
 nothing else in the repo would catch it: there is no requirements file to
 review and CI never imports the backend.
 
-Scope is `control_plane/` + `server.py` — the code a consuming host actually
-runs. `tests/` is exempt; pytest is a development dependency, not a runtime one.
+Scope is `control_plane/` + `server.py` + `scripts/*.py` — the code a consuming
+host actually runs. `tests/` is exempt; pytest is a development dependency, not
+a runtime one.
 
 Run:
     python3 projects/switchboard/repos/switchboard/tests/test_stdlib_purity.py
@@ -31,7 +32,14 @@ FIRST_PARTY = {"control_plane", "server"}
 
 
 def _backend_sources() -> list[Path]:
-    return sorted(ROOT.glob("control_plane/**/*.py")) + [ROOT / "server.py"]
+    # scripts/ is in scope per ADR-0024 § Handoff: an operator runs
+    # `python3 scripts/price_store.py` on the same no-install promise as
+    # `python3 server.py`, so a stray dependency there breaks it identically.
+    return (
+        sorted(ROOT.glob("control_plane/**/*.py"))
+        + [ROOT / "server.py"]
+        + sorted(ROOT.glob("scripts/*.py"))
+    )
 
 
 def _foreign_imports(paths: list[Path]) -> dict[str, set[str]]:
