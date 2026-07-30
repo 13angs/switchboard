@@ -1,6 +1,7 @@
 /** Typed fetch wrappers — all server communication centralised here. */
 
 import type { BoardState, Transcript, RichTranscript, OkResponse } from './types';
+import type { TimelineResponse } from './timeline';
 
 const BASE = '';
 
@@ -32,6 +33,13 @@ export async function fetchRichTranscript(
   since?: string
 ): Promise<RichTranscript> {
   return fetchTranscript(sessionId, since, 'rich') as Promise<unknown> as Promise<RichTranscript>;
+}
+
+/** Tool-call timeline for one session (ADR-0017 §SD1). Not polled. */
+export async function fetchTimeline(sessionId: string): Promise<TimelineResponse> {
+  const res = await fetch(`${BASE}/session/${encodeURIComponent(sessionId)}/timeline`);
+  if (!res.ok) throw new Error(`timeline ${res.status}`);
+  return res.json();
 }
 
 export async function killSession(

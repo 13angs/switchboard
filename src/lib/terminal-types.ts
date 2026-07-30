@@ -74,14 +74,22 @@ export interface LeftDrawerProps {
   onSelectSession: (sessionId: string) => void;
 }
 
+/**
+ * What the centre pane shows. The RightDrawer's toggle buttons drive this, not
+ * the drawer's own body — see the note on RightDrawerProps.view.
+ */
+export type CenterView = 'terminal' | 'files' | 'timeline';
+
 export interface RightDrawerProps {
   open: boolean;
   session: SessionInfo | null;
   pullRequests?: PullRequestRef[];
-  view?: 'terminal' | 'files';
-  onViewChange?: (v: 'terminal' | 'files') => void;
+  view?: CenterView;
+  onViewChange?: (v: CenterView) => void;
   /** Omit ViewToggle entirely (Chat page, HLD §3.4). */
   hideViewToggle?: boolean;
+  /** Hide the Timeline button when there is no session to build one from. */
+  hideTimelineToggle?: boolean;
 }
 
 export interface StatusBarProps {

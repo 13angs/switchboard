@@ -7,6 +7,7 @@ import { RightDrawer } from '../components/shared/RightDrawer';
 import { StatusBar } from '../components/shared/StatusBar';
 import { TerminalBody } from '../components/terminal/TerminalBody';
 import { FilesPanel } from '../components/terminal/FilesPanel';
+import { TimelinePanel } from '../components/terminal/TimelinePanel';
 import { StateBanner } from '../components/chat/StateBanner';
 import { MessageList } from '../components/chat/MessageList';
 import { RawJsonView } from '../components/chat/RawJsonView';
@@ -18,7 +19,7 @@ import {
   killSession,
   startSession,
 } from '../lib/api';
-import type { SessionDrawerView, SessionInfo, SessionStatus, FileEntry } from '../lib/terminal-types';
+import type { SessionDrawerView, SessionInfo, SessionStatus, FileEntry, CenterView } from '../lib/terminal-types';
 import type { NotificationEvent, SessionCard, RichMessage, RichContentBlock } from '../lib/types';
 import { ago } from '../lib/format';
 import { extractPullRequests, mergePullRequests, type PullRequestRef } from '../lib/prs';
@@ -28,7 +29,6 @@ import './Terminal.css';
 import './Chat.css';
 
 type AgentView = 'terminal' | 'chat' | 'files';
-type TerminalCenterView = 'terminal' | 'files';
 type ChatState = 'connecting' | 'loading' | 'ended' | 'error' | 'ready' | null;
 
 interface Message extends RichMessage {}
@@ -131,7 +131,7 @@ export function AgentPage() {
   const [status, setStatus] = useState<SessionStatus>(initialSessionId ? 'waiting' : 'connecting');
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
-  const [terminalView, setTerminalView] = useState<TerminalCenterView>('terminal');
+  const [terminalView, setTerminalView] = useState<CenterView>('terminal');
   const [sessionDrawerView, setSessionDrawerView] = useState<SessionDrawerView>('active');
   const [ended, setEnded] = useState(false);
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
@@ -551,12 +551,14 @@ export function AgentPage() {
                   onMount={handleMount}
                   ended={ended}
                 />
-              ) : (
+              ) : terminalView === 'files' ? (
                 <FilesPanel
                   files={files}
                   branch={displaySession.git_branch}
                   visible={true}
                 />
+              ) : (
+                <TimelinePanel sessionId={sessionId} visible={true} />
               )}
             </div>
           )}
@@ -598,6 +600,7 @@ export function AgentPage() {
           view={terminalView}
           onViewChange={setTerminalView}
           hideViewToggle={agentView === 'chat' || agentView === 'files'}
+          hideTimelineToggle={!sessionId}
         />
       </div>
 
