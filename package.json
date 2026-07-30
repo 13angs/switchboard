@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "check:lib": "esbuild src/lib/export-markdown.check.ts --bundle --format=esm | node --input-type=module",
+    "check:lib": "npm run check:export && npm run check:rawjson",
+    "check:export": "esbuild src/lib/export-markdown.check.ts --bundle --format=esm | node --input-type=module",
+    "check:rawjson": "esbuild src/lib/raw-json.check.ts --bundle --format=esm | node --input-type=module",
     "preview": "vite preview"
   },
   "dependencies": {
