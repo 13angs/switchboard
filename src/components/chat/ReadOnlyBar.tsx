@@ -9,6 +9,8 @@ interface ReadOnlyBarProps {
   costUsd?: number | null;
   costPartial?: boolean;
   unpricedModels?: string[] | null;
+  /** Oldest rate-verification date behind the figure (ADR-0026 §SD3). */
+  ratesCheckedOn?: string | null;
   /** Download the transcript as markdown; button hidden when absent (ADR-0007). */
   onExport?: () => void;
   /** Toggle rendered bubbles ↔ raw JSON; button hidden when absent (ADR-0015 §SD1). */
@@ -23,6 +25,7 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
   costUsd,
   costPartial,
   unpricedModels,
+  ratesCheckedOn,
   onExport,
   onToggleJson,
   showJson,
@@ -80,7 +83,7 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
     }
   };
 
-  const cost = costDisplay(costUsd, costPartial, unpricedModels); // null → hidden
+  const cost = costDisplay(costUsd, costPartial, unpricedModels, ratesCheckedOn); // null → hidden
 
   return (
     <div className="readonly-bar">

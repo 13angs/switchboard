@@ -70,6 +70,7 @@ function cardToSessionInfo(c: SessionCard): SessionInfo {
     total_cost_usd: c.total_cost_usd,
     cost_partial: c.cost_partial,
     unpriced_models: c.unpriced_models,
+    rates_checked_on: c.rates_checked_on,
     age: ago(c.last_ts),
     status: 'connecting',
     health: c.health,
@@ -574,6 +575,7 @@ export function AgentPage() {
                 costUsd={displaySession.total_cost_usd}
                 costPartial={displaySession.cost_partial}
                 unpricedModels={displaySession.unpriced_models}
+                ratesCheckedOn={displaySession.rates_checked_on}
                 onExport={messages.length > 0 ? handleExport : undefined}
                 onToggleJson={
                   messages.length > 0 ? () => setShowRawJson((v) => !v) : undefined

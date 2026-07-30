@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "check:lib": "npm run check:export && npm run check:rawjson",
+    "check:lib": "npm run check:export && npm run check:rawjson && npm run check:cost",
     "check:export": "esbuild src/lib/export-markdown.check.ts --bundle --format=esm | node --input-type=module",
     "check:rawjson": "esbuild src/lib/raw-json.check.ts --bundle --format=esm | node --input-type=module",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:cost": "esbuild src/lib/cost-display.check.ts --bundle --format=esm | node --input-type=module"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

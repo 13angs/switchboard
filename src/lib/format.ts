@@ -38,10 +38,16 @@ export function costDisplay(
   usd: number | null | undefined,
   partial?: boolean,
   unpricedModels?: string[] | null,
+  ratesCheckedOn?: string | null,
 ): CostDisplay | null {
   const unknown = unpricedModels ?? [];
+  // ADR-0026 §SD3: the figure's provenance rides the tooltip the reader is
+  // already hovering. No badge, no banner — a wrong rate is still shown as
+  // right until a human checks, and this is what makes checking cheap.
+  const checked = ratesCheckedOn ? ` · rates checked ${ratesCheckedOn}` : '';
   if (usd == null) {
     if (unknown.length === 0) return null;
+    // No date here: nothing was priced, so no rate stands behind the cell.
     return {
       text: 'unpriced',
       title: `No rate in pricing.json for: ${unknown.join(', ')}`,
@@ -51,11 +57,15 @@ export function costDisplay(
   if (partial && unknown.length > 0) {
     return {
       text: `${costStr(usd)}+`,
-      title: `Priced subtotal — no rate for: ${unknown.join(', ')}`,
+      title: `Priced subtotal — no rate for: ${unknown.join(', ')}${checked}`,
       unpriced: false,
     };
   }
-  return { text: costStr(usd), title: 'Session cost (USD)', unpriced: false };
+  return {
+    text: costStr(usd),
+    title: `Session cost (USD)${checked}`,
+    unpriced: false,
+  };
 }
 
 export function sidShort(sessionId: string | null | undefined): string {

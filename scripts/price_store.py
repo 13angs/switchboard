@@ -65,6 +65,9 @@ class StoreReport:
     unpriced_count: int = 0
     no_usage_count: int = 0
     store_root: Optional[Path] = None
+    # Oldest `checked_on` across the rate card (ADR-0026 §SD3). The total is
+    # only as trustworthy as its stalest rate, so the figure carries the date.
+    rates_checked_on: Optional[str] = None
 
 
 def price_store(
@@ -118,6 +121,9 @@ def price_store(
         unpriced_count=sum(1 for s in sessions if s.cost is None and s.unpriced_models),
         no_usage_count=sum(1 for s in sessions if not s.has_usage),
         store_root=store_root,
+        rates_checked_on=min(
+            (r.checked_on for r in registry.models.values()), default=None
+        ),
     )
 
 
@@ -145,8 +151,12 @@ def render(report: StoreReport) -> str:
     ]
     if report.unpriced_models:
         lines.append(f"{'':16} {'':>12}  unpriced models: " + ", ".join(report.unpriced_models))
-    # ADR-0024 §SD2 — a figure travels with what produced it.
-    lines.append(f"\nscripts/price_store.py · store {report.store_root}")
+    # ADR-0024 §SD2 — a figure travels with what produced it. ADR-0026 §SD3
+    # adds when the rates behind it were last verified against their sources.
+    checked = (
+        f" · rates checked {report.rates_checked_on}" if report.rates_checked_on else ""
+    )
+    lines.append(f"\nscripts/price_store.py · store {report.store_root}{checked}")
     return "\n".join(lines)
 
 

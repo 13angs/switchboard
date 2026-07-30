@@ -338,6 +338,9 @@ class SessionSummary:
     # "this cost nothing" must not share a cell.
     cost_partial: bool = False
     unpriced_models: list[str] = field(default_factory=list)
+    # Oldest `checked_on` among the models that produced the figure
+    # (ADR-0026 §SD3). A cost is only as trustworthy as its stalest rate.
+    rates_checked_on: Optional[str] = None
     harness: str = "claude"
     provider: Optional[str] = "claude"
 
@@ -455,6 +458,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
     # above stays as an override for harnesses that do supply one.
     cost_partial = False
     unpriced_models: list[str] = []
+    rates_checked_on: Optional[str] = None
     if total_cost is None and _pricing is not None and usage_by_model:
         priced_total = 0.0
         priced_any = False
@@ -470,6 +474,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
         if priced_any:
             total_cost = priced_total
             cost_partial = bool(unpriced_models)
+            rates_checked_on = _pricing.oldest_checked_on(sorted(usage_by_model))
 
     if not title:
         title = slug
@@ -490,6 +495,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
         total_cost_usd=total_cost,
         cost_partial=cost_partial,
         unpriced_models=unpriced_models,
+        rates_checked_on=rates_checked_on,
     )
 
 

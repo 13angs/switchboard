@@ -29,11 +29,11 @@ from control_plane import claude_store, pricing  # noqa: E402
 M = 1_000_000
 
 REGISTRY_JSON = {
-    "cache_multipliers": {"write_5m": 1.25, "write_1h": 2.0, "read": 0.1},
+    "cache_multipliers": {"write_5m": 1.25, "write_1h": 2.0, "read": 0.1, "source": "https://example.test/caching", "checked_on": "2026-07-30"},
     "aliases": {},
     "models": {
-        "claude-sonnet-5": {"input": 3.00, "output": 15.00},
-        "claude-opus-5": {"input": 5.00, "output": 25.00},
+        "claude-sonnet-5": {"input": 3.00, "output": 15.00, "source": "https://example.test/rates", "checked_on": "2026-07-30"},
+        "claude-opus-5": {"input": 5.00, "output": 25.00, "source": "https://example.test/rates", "checked_on": "2026-07-30"},
     },
     "default_fallback": None,
 }

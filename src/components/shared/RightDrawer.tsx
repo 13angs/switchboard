@@ -113,6 +113,7 @@ export const RightDrawer: FC<RightDrawerProps> = ({
                     session.total_cost_usd,
                     session.cost_partial,
                     session.unpriced_models,
+                    session.rates_checked_on,
                   );
                   return (
                     <span
