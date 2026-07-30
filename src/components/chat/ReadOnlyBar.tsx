@@ -11,6 +11,9 @@ interface ReadOnlyBarProps {
   unpricedModels?: string[] | null;
   /** Download the transcript as markdown; button hidden when absent (ADR-0007). */
   onExport?: () => void;
+  /** Toggle rendered bubbles ↔ raw JSON; button hidden when absent (ADR-0015 §SD1). */
+  onToggleJson?: () => void;
+  showJson?: boolean;
   onSwitchToTerminal: () => void;
 }
 
@@ -21,6 +24,8 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
   costPartial,
   unpricedModels,
   onExport,
+  onToggleJson,
+  showJson,
   onSwitchToTerminal,
 }) => {
   const getContent = () => {
@@ -80,7 +85,7 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
   return (
     <div className="readonly-bar">
       <span className="ro-main">{getContent()}</span>
-      {(cost || onExport) && (
+      {(cost || onExport || onToggleJson) && (
         <span className="ro-right">
           {cost && (
             <span
@@ -89,6 +94,16 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
             >
               {cost.text}
             </span>
+          )}
+          {onToggleJson && (
+            <button
+              className={`ro-json-btn${showJson ? ' active' : ''}`}
+              onClick={onToggleJson}
+              aria-pressed={Boolean(showJson)}
+              title={showJson ? 'Back to rendered transcript' : 'Show the raw transcript JSON'}
+            >
+              {'{} JSON'}
+            </button>
           )}
           {onExport && (
             <button

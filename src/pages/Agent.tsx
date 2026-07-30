@@ -9,6 +9,7 @@ import { TerminalBody } from '../components/terminal/TerminalBody';
 import { FilesPanel } from '../components/terminal/FilesPanel';
 import { StateBanner } from '../components/chat/StateBanner';
 import { MessageList } from '../components/chat/MessageList';
+import { RawJsonView } from '../components/chat/RawJsonView';
 import { ReadOnlyBar } from '../components/chat/ReadOnlyBar';
 import { FileNavigator } from '../components/files/FileNavigator';
 import {
@@ -140,6 +141,8 @@ export function AgentPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState(false);
+  // Transient debug aid — local only, resets on session switch (ADR-0015 §SD4).
+  const [showRawJson, setShowRawJson] = useState(false);
   const lastTsRef = useRef<string | null>(null);
   const typingRef = useRef(false);
   const startRequestedRef = useRef(false);
@@ -228,6 +231,12 @@ export function AgentPage() {
       requestAnimationFrame(() => termApiRef.current?.fit());
     }
   }, [agentView, sessionId]);
+
+  // The raw-JSON view is a per-session debug aid, never a stored preference
+  // (ADR-0015 §SD4) — switching sessions returns to rendered bubbles.
+  useEffect(() => {
+    setShowRawJson(false);
+  }, [sessionId]);
 
   useEffect(() => {
     if (initialSessionId || !provider || agentView !== 'chat' || startRequestedRef.current) return;
@@ -553,7 +562,11 @@ export function AgentPage() {
 
           <div className={`agent-pane chat-body${agentView === 'chat' ? ' active' : ''}`}>
             <StateBanner state={chatState} errorMessage={errorMsg} />
-            <MessageList messages={messages} typing={typing} />
+            {showRawJson ? (
+              <RawJsonView messages={messages} />
+            ) : (
+              <MessageList messages={messages} typing={typing} />
+            )}
             <div className="chat-bottom">
               <ReadOnlyBar
                 state={typing ? 'working' : ended ? 'ended' : chatState}
@@ -562,6 +575,10 @@ export function AgentPage() {
                 costPartial={displaySession.cost_partial}
                 unpricedModels={displaySession.unpriced_models}
                 onExport={messages.length > 0 ? handleExport : undefined}
+                onToggleJson={
+                  messages.length > 0 ? () => setShowRawJson((v) => !v) : undefined
+                }
+                showJson={showRawJson}
                 onSwitchToTerminal={() => switchAgentView('terminal')}
               />
             </div>
