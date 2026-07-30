@@ -28,6 +28,7 @@ export const RightDrawer: FC<RightDrawerProps> = ({
   view,
   onViewChange,
   hideViewToggle,
+  hideTimelineToggle,
 }) => {
   const prs = session
     ? mergePullRequests(
@@ -54,6 +55,14 @@ export const RightDrawer: FC<RightDrawerProps> = ({
             >
               Files
             </button>
+            {!hideTimelineToggle && (
+              <button
+                className={view === 'timeline' ? 'active' : ''}
+                onClick={() => onViewChange('timeline')}
+              >
+                Timeline
+              </button>
+            )}
           </div>
         )}
       </div>

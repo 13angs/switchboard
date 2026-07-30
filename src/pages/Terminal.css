@@ -8,6 +8,7 @@
 
 .drawer-body,
 .files-panel,
+.timeline-panel,
 .message-list,
 .xterm .xterm-viewport {
   scrollbar-width: thin;
@@ -16,6 +17,7 @@
 
 .drawer-body::-webkit-scrollbar,
 .files-panel::-webkit-scrollbar,
+.timeline-panel::-webkit-scrollbar,
 .message-list::-webkit-scrollbar,
 .xterm .xterm-viewport::-webkit-scrollbar {
   width: 10px;
@@ -24,6 +26,7 @@
 
 .drawer-body::-webkit-scrollbar-track,
 .files-panel::-webkit-scrollbar-track,
+.timeline-panel::-webkit-scrollbar-track,
 .message-list::-webkit-scrollbar-track,
 .xterm .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
@@ -31,6 +34,7 @@
 
 .drawer-body::-webkit-scrollbar-thumb,
 .files-panel::-webkit-scrollbar-thumb,
+.timeline-panel::-webkit-scrollbar-thumb,
 .message-list::-webkit-scrollbar-thumb,
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--muted) 32%, transparent);
@@ -41,6 +45,7 @@
 
 .drawer-body::-webkit-scrollbar-thumb:hover,
 .files-panel::-webkit-scrollbar-thumb:hover,
+.timeline-panel::-webkit-scrollbar-thumb:hover,
 .message-list::-webkit-scrollbar-thumb:hover,
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--muted) 55%, transparent);
@@ -750,6 +755,130 @@
 .sb-dot.waiting {
   background: var(--working);
   animation: pulse 1.8s ease-in-out infinite;
+}
+
+/* ── tool-call timeline (ADR-0017 §SD3, ADR-0025 §SD3) ── */
+.timeline-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.timeline-filters {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.chip.filter {
+  cursor: pointer;
+}
+
+.chip.filter.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--accent-soft);
+}
+
+/* One honest sentence in place of a column of identical dashes. */
+.timeline-note {
+  color: var(--faint);
+  font-size: 11px;
+  padding: 4px 2px 8px;
+}
+
+.timeline-empty {
+  color: var(--faint);
+  padding: 8px 2px;
+}
+
+.timeline-row {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.timeline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 2px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-head:hover {
+  background: var(--panel-2);
+}
+
+.tl-icon {
+  flex: 0 0 auto;
+}
+
+.tl-tool {
+  flex: 0 0 auto;
+  min-width: 62px;
+  color: var(--text);
+}
+
+.tl-args {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.tl-duration {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A duration that does not exist must not read like a small number. */
+.tl-duration-absent {
+  color: var(--faint);
+}
+
+.tl-expand {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.timeline-detail {
+  padding: 4px 2px 8px 26px;
+}
+
+.tl-detail-label {
+  color: var(--faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+}
+
+.timeline-detail pre {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
 }
 
 /* ── responsive ── */
