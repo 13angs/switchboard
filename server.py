@@ -20,6 +20,9 @@ Endpoints:
     GET  /events                      -> Server-Sent Events for lifecycle notifications
     GET  /health                      -> {ok: true}
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
+    GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
+                                         args_summary, args, ts, duration_ms,
+                                         duration_state, result_summary, result_ts}]}
     POST /session/start               -> spawn a fresh harness PTY
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
@@ -266,6 +269,153 @@ def _transcript_source(
         return "agy", apath
 
     return None, None
+
+
+# --- timeline (ADR-0017, amended by ADR-0025) -----------------------------
+
+# Arguments that identify what a call acted on, most specific first. Anything
+# not listed falls back to the first string value in the dict.
+_ARGS_SUMMARY_KEYS = (
+    "file_path",
+    "notebook_path",
+    "command",
+    "path",
+    "pattern",
+    "url",
+    "query",
+    "description",
+    "prompt",
+)
+
+_ARGS_SUMMARY_MAX = 120
+_RESULT_SUMMARY_MAX = 200
+
+
+def _tool_category(tool_name: str) -> str:
+    """Filter-chip bucket for a tool name (ADR-0017 §SD2 + §SD3 override).
+
+    FILE_TOOLS is imported, never re-declared — a third server-side copy of that
+    map is exactly what §SD2 exists to prevent. The one deviation is Bash: the
+    map calls it 'edit' (it *can* write files), but a filter chip that lumps
+    shell commands in with file edits is useless for reading a session back.
+    """
+    if tool_name in ("Bash", "exec_command"):
+        return "bash"
+    return analytics.FILE_TOOLS.get(tool_name, "other")
+
+
+def _args_summary(args: dict) -> str:
+    """One-line label for a call's arguments."""
+    if not isinstance(args, dict) or not args:
+        return ""
+    value = None
+    for key in _ARGS_SUMMARY_KEYS:
+        if isinstance(args.get(key), str) and args[key]:
+            value = args[key]
+            break
+    if value is None:
+        for candidate in args.values():
+            if isinstance(candidate, str) and candidate:
+                value = candidate
+                break
+    if value is None:
+        return ""
+    collapsed = " ".join(value.split())
+    if len(collapsed) > _ARGS_SUMMARY_MAX:
+        collapsed = collapsed[: _ARGS_SUMMARY_MAX - 1] + "…"
+    return collapsed
+
+
+def _result_summary(content) -> Optional[str]:
+    """Truncated text of a tool_result's content (str or list of text blocks)."""
+    if isinstance(content, str):
+        return content[:_RESULT_SUMMARY_MAX] if content else None
+    if isinstance(content, list):
+        text = " ".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ).strip()
+        return text[:_RESULT_SUMMARY_MAX] if text else None
+    return None
+
+
+def _build_timeline(store_module, jsonl_path) -> list[dict]:
+    """Extract tool_use→tool_result pairs from a transcript.
+
+    `ts` is an opaque per-harness ordering key, not a timestamp (ADR-0025 §SD1):
+    it is handed to the *store's own* `_parse_ts`, and a duration is computed
+    only when both ends parse. `duration_state` then names why a duration is
+    missing, so a harness with no clock ('unsupported') never reads as a tool
+    that is still running ('pending') — see ADR-0025 §SD2.
+
+    Entries come back in store order. There is deliberately no sort: store order
+    is already chronological, whereas sorting on `ts` lexicographically is only
+    correct while every harness happens to emit a uniform UTC suffix and a
+    fixed-width step counter (ADR-0025 §SD1).
+    """
+    messages = store_module.read_messages_rich(Path(jsonl_path))
+    parse_ts = store_module._parse_ts
+    entries: list[dict] = []
+    pending: dict[str, dict] = {}  # tool_use id → entry awaiting its result
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "tool_use":
+                name = block.get("name", "?")
+                args = block.get("input", {})
+                entry = {
+                    "tool": name,
+                    "category": _tool_category(name),
+                    "args_summary": _args_summary(args),
+                    "args": args,
+                    "ts": msg.get("ts"),
+                    "duration_ms": None,
+                    "duration_state": "pending",
+                    "result_summary": None,
+                    "result_ts": None,
+                }
+                use_id = block.get("id") or ""
+                if use_id:
+                    # An id-less call can never be paired, so it must not sit in
+                    # `pending` under a shared "" key — the next id-less result
+                    # would otherwise attach to an unrelated call. It stays
+                    # visible in `entries` and reads as "pending" forever, which
+                    # is the honest outcome.
+                    pending[use_id] = entry
+                entries.append(entry)
+            elif btype == "tool_result":
+                result_id = block.get("tool_use_id") or ""
+                # pop, not lookup: one result closes one call. A repeated id
+                # cannot silently overwrite an already-timed entry.
+                entry = pending.pop(result_id, None) if result_id else None
+                if entry is None:
+                    # Orphan result — a `since=` window can slice a transcript
+                    # between a call and its result. Nothing to attach it to.
+                    continue
+                entry["result_ts"] = msg.get("ts")
+                entry["result_summary"] = _result_summary(block.get("content", ""))
+                t1 = parse_ts(entry["ts"])
+                t2 = parse_ts(entry["result_ts"])
+                if t1 and t2:
+                    entry["duration_ms"] = int((t2 - t1).total_seconds() * 1000)
+
+    for entry in entries:
+        if parse_ts(entry["ts"]) is None:
+            # Decided per entry from the ts itself, not from a hardcoded harness
+            # list — a store that gains real timestamps starts reporting
+            # "measured" with no change here (ADR-0025 §SD2).
+            entry["duration_state"] = "unsupported"
+        elif entry["duration_ms"] is not None:
+            entry["duration_state"] = "measured"
+
+    return entries
 
 
 # --- registry helpers -----------------------------------------------------
@@ -630,6 +780,8 @@ def make_handler(repo_root: str):
                 self._events()
             elif (sid := _session_from_path(path, "transcript")) is not None:
                 self._transcript(sid, repo_root)
+            elif (sid := _session_from_path(path, "timeline")) is not None:
+                self._timeline(sid, repo_root)
             elif (sid := _session_from_path(path, "file")) is not None:
                 self._file_content(sid, repo_root)
             else:
@@ -745,6 +897,35 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 self._json(500, {"error": str(e)})
+
+        def _timeline(self, session_id: str, repo_root: str):
+            """ADR-0017 §SD1 — tool calls for one session, on demand.
+
+            Not polled: the timeline is derived from a transcript the browser is
+            already reading, so a live session's new calls arrive on the next
+            tab switch rather than on a timer.
+            """
+            harness_name, jsonl_path = _transcript_source(session_id, repo_root)
+            if harness_name is None or jsonl_path is None:
+                self._json(404, {"error": f"session '{session_id}' not found"})
+                return
+            jpath = Path(jsonl_path)
+            if not jpath.exists():
+                self._json(404, {"error": "transcript file not found"})
+                return
+            try:
+                entries = _build_timeline(_store_for(harness_name), jpath)
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+                return
+            self._json(
+                200,
+                {
+                    "session_id": session_id,
+                    "harness": harness_name,
+                    "entries": entries,
+                },
+            )
 
         def _transcript(self, session_id: str, repo_root: str):
             harness_name, jsonl_path = _transcript_source(session_id, repo_root)
