@@ -15,6 +15,8 @@ export interface SessionCard {
   /** Model ids the registry could not price. Non-empty with a null cost means
    *  `unpriced`, which is not `$0.00`. ADR-0022 §SD2. */
   unpriced_models?: string[] | null;
+  /** Oldest `checked_on` among the rates behind the figure (ADR-0026 §SD3). */
+  rates_checked_on?: string | null;
   pr_number: number | null;
   pr_url: string | null;
   pr_state: string | null;

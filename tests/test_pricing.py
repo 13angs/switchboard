@@ -37,15 +37,16 @@ from control_plane.pricing import TokenUsage  # noqa: E402
 @pytest.fixture
 def sample_pricing_json():
     return {
-        "cache_multipliers": {"write_5m": 1.25, "write_1h": 2.0, "read": 0.1},
+        "cache_multipliers": {"write_5m": 1.25, "write_1h": 2.0, "read": 0.1, "source": "https://example.test/caching", "checked_on": "2026-07-30"},
         "aliases": {"claude-opus-4-8-20260115": "claude-opus-4-8"},
         "models": {
-            "claude-sonnet-5": {"input": 3.00, "output": 15.00},
-            "claude-opus-4-8": {"input": 5.00, "output": 25.00},
+            "claude-sonnet-5": {"input": 3.00, "output": 15.00, "source": "https://example.test/rates", "checked_on": "2026-07-30"},
+            "claude-opus-4-8": {"input": 5.00, "output": 25.00, "source": "https://example.test/rates", "checked_on": "2026-07-30"},
             # Non-standard read ratio — exercises the per-model override merge.
             "cheap-reader": {
                 "input": 10.00,
                 "output": 50.00,
+                "source": "https://example.test/rates", "checked_on": "2026-07-30",
                 "cache_multipliers": {"read": 0.05},
             },
         },
@@ -105,19 +106,19 @@ def test_load_pricing_models_not_dict(tmp_path):
 def test_load_pricing_invalid_price_type(tmp_path):
     with pytest.raises(ValueError):
         pricing.load_pricing(
-            _write(tmp_path, {"models": {"m": {"input": "free", "output": 15.0}}})
+            _write(tmp_path, {"models": {"m": {"input": "free", "output": 15.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}}})
         )
 
 
 def test_load_pricing_missing_price_key(tmp_path):
     with pytest.raises(ValueError):
-        pricing.load_pricing(_write(tmp_path, {"models": {"m": {"input": 3.0}}}))
+        pricing.load_pricing(_write(tmp_path, {"models": {"m": {"input": 3.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}}}))
 
 
 def test_load_pricing_defaults_cache_multipliers_when_absent(tmp_path):
     """A registry with no cache block still prices cache tokens, not zero."""
     reg = pricing.load_pricing(
-        _write(tmp_path, {"models": {"m": {"input": 10.0, "output": 50.0}}})
+        _write(tmp_path, {"models": {"m": {"input": 10.0, "output": 50.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}}})
     )
     cache = reg.rate_for("m").cache
     assert (cache.write_5m, cache.write_1h, cache.read) == (1.25, 2.0, 0.1)
@@ -137,8 +138,8 @@ def test_load_pricing_rejects_bad_multiplier_type(tmp_path):
             _write(
                 tmp_path,
                 {
-                    "cache_multipliers": {"read": "cheap"},
-                    "models": {"m": {"input": 3.0, "output": 15.0}},
+                    "cache_multipliers": {"read": "cheap", "source": "https://example.test/caching", "checked_on": "2026-07-30"},
+                    "models": {"m": {"input": 3.0, "output": 15.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}},
                 },
             )
         )
@@ -152,7 +153,7 @@ def test_load_pricing_rejects_alias_to_unknown_model(tmp_path):
                 tmp_path,
                 {
                     "aliases": {"some-snapshot": "no-such-model"},
-                    "models": {"m": {"input": 3.0, "output": 15.0}},
+                    "models": {"m": {"input": 3.0, "output": 15.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}},
                 },
             )
         )
@@ -166,7 +167,7 @@ def test_load_pricing_rejects_non_null_default_fallback(tmp_path):
             _write(
                 tmp_path,
                 {
-                    "models": {"m": {"input": 3.0, "output": 15.0}},
+                    "models": {"m": {"input": 3.0, "output": 15.0, "source": "https://example.test/rates", "checked_on": "2026-07-30"}},
                     "default_fallback": {"input": 1.0, "output": 2.0},
                 },
             )
@@ -269,3 +270,115 @@ def test_unpriced_log_separates_distinct_models(registry, capsys):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# --- Test: provenance (ADR-0026 §SD2) ----------------------------------------
+#
+# The rate's *correctness* has no offline oracle — ADR-0026 §SD1 rejects trying
+# to build one. What is enforceable is that every committed rate states where it
+# came from and when a human last checked it, so verifying costs six link
+# clicks instead of a re-derivation. These tests are that enforcement.
+
+
+def _model(**overrides) -> dict:
+    base = {
+        "input": 3.0,
+        "output": 15.0,
+        "source": "https://platform.claude.com/docs/en/pricing",
+        "checked_on": "2026-07-30",
+    }
+    base.update(overrides)
+    return base
+
+
+def _payload(model: dict, multipliers: dict | None = None) -> dict:
+    return {
+        "cache_multipliers": multipliers
+        if multipliers is not None
+        else {
+            "write_5m": 1.25,
+            "write_1h": 2.0,
+            "read": 0.1,
+            "source": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+            "checked_on": "2026-07-30",
+        },
+        "models": {"m": model},
+    }
+
+
+def test_provenance_round_trips(tmp_path):
+    reg = pricing.load_pricing(_write(tmp_path, _payload(_model())))
+    rate = reg.rate_for("m")
+    assert rate is not None
+    assert rate.source.startswith("https://")
+    assert rate.checked_on == "2026-07-30"
+    assert reg.cache_checked_on == "2026-07-30"
+
+
+def test_model_missing_source_is_rejected(tmp_path):
+    payload = _payload(_model())
+    del payload["models"]["m"]["source"]
+    with pytest.raises(ValueError, match="source"):
+        pricing.load_pricing(_write(tmp_path, payload))
+
+
+def test_model_missing_checked_on_is_rejected(tmp_path):
+    payload = _payload(_model())
+    del payload["models"]["m"]["checked_on"]
+    with pytest.raises(ValueError, match="checked_on"):
+        pricing.load_pricing(_write(tmp_path, payload))
+
+
+def test_multipliers_missing_provenance_is_rejected(tmp_path):
+    """The cache ratios are rates too — same bar as a model's input/output."""
+    with pytest.raises(ValueError, match="source"):
+        pricing.load_pricing(
+            _write(tmp_path, _payload(_model(), multipliers={"read": 0.1}))
+        )
+    with pytest.raises(ValueError, match="checked_on"):
+        pricing.load_pricing(
+            _write(
+                tmp_path,
+                _payload(
+                    _model(),
+                    multipliers={"read": 0.1, "source": "https://example.test/c"},
+                ),
+            )
+        )
+
+
+def test_checked_on_must_be_an_iso_date(tmp_path):
+    """`checked_on` is compared and displayed as a date — reject prose."""
+    for bad in ("last Tuesday", "2026-7-30", "30/07/2026", "2026-13-01", ""):
+        with pytest.raises(ValueError, match="checked_on"):
+            pricing.load_pricing(
+                _write(tmp_path, _payload(_model(checked_on=bad)))
+            )
+
+
+def test_source_must_be_a_url(tmp_path):
+    """A source you cannot open is not provenance."""
+    for bad in ("the pricing page", "", "platform.claude.com/pricing"):
+        with pytest.raises(ValueError, match="source"):
+            pricing.load_pricing(_write(tmp_path, _payload(_model(source=bad))))
+
+
+def test_oldest_checked_on_picks_the_stalest(tmp_path):
+    """§SD3 shows the oldest contributing date — the honest summary."""
+    payload = _payload(_model())
+    payload["models"]["older"] = _model(checked_on="2026-01-15")
+    payload["models"]["newest"] = _model(checked_on="2026-07-30")
+    reg = pricing.load_pricing(_write(tmp_path, payload))
+    assert reg.oldest_checked_on(["m", "newest"]) == "2026-07-30"
+    assert reg.oldest_checked_on(["m", "older", "newest"]) == "2026-01-15"
+    assert reg.oldest_checked_on(["deepseek-v4-pro"]) is None
+
+
+def test_committed_pricing_json_carries_provenance():
+    """The shipped rate card must satisfy its own schema (ADR-0026 §SD2)."""
+    reg = pricing.load_pricing(str(Path(__file__).resolve().parent.parent / "pricing.json"))
+    assert len(reg) > 0
+    for model_id in reg.models:
+        rate = reg.rate_for(model_id)
+        assert rate is not None and rate.source.startswith("https://"), model_id
+        assert rate.checked_on, model_id

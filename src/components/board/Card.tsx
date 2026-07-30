@@ -49,7 +49,12 @@ const CardImpl: FC<CardProps> = ({
 }) => {
   const sid = sidShort(card.session_id);
   const age = ago(card.last_ts);
-  const cost = costDisplay(card.total_cost_usd, card.cost_partial, card.unpriced_models);
+  const cost = costDisplay(
+    card.total_cost_usd,
+    card.cost_partial,
+    card.unpriced_models,
+    card.rates_checked_on,
+  );
   const isMerged = !!card.merged_pr;
 
   return (

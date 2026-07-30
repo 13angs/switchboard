@@ -23,7 +23,9 @@ their own transcript shapes and hand a `TokenUsage` to `calculate_cost`.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Optional
 
 # Provider-wide defaults, used when the registry omits `cache_multipliers`.
@@ -32,6 +34,10 @@ from typing import Optional
 _DEFAULT_WRITE_5M = 1.25
 _DEFAULT_WRITE_1H = 2.0
 _DEFAULT_READ = 0.1
+
+# `checked_on` is compared as a string by oldest_checked_on(), so the zero-padded
+# ISO form is load-bearing, not cosmetic: it makes lexical order date order.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @dataclass(frozen=True)
@@ -45,10 +51,17 @@ class CacheMultipliers:
 
 @dataclass(frozen=True)
 class ModelRate:
-    """USD per 1M tokens for one model, plus its resolved cache ratios."""
+    """USD per 1M tokens for one model, plus its resolved cache ratios.
+
+    `source` and `checked_on` are mandatory (ADR-0026 §SD2). A rate's
+    correctness has no offline oracle; the presence of its provenance does, so
+    that is what the loader enforces.
+    """
 
     input: float
     output: float
+    source: str
+    checked_on: str
     cache: CacheMultipliers = CacheMultipliers()
 
 
@@ -78,6 +91,19 @@ class PricingRegistry:
 
     models: dict[str, ModelRate]
     aliases: dict[str, str]
+    cache_source: str = ""
+    cache_checked_on: str = ""
+
+    def oldest_checked_on(self, models: list[str]) -> Optional[str]:
+        """The stalest `checked_on` among models that could be priced.
+
+        §SD3 surfaces this next to a session's cost: with several models
+        contributing, the figure is only as trustworthy as its least recently
+        verified rate. Unpriceable ids contribute nothing — they are already
+        reported separately as `unpriced_models`.
+        """
+        dates = [r.checked_on for r in (self.rate_for(m) for m in models) if r]
+        return min(dates) if dates else None
 
     def rate_for(self, model: str) -> Optional[ModelRate]:
         """Exact match, then a declared alias. Never a prefix guess (§SD2)."""
@@ -145,6 +171,31 @@ def _multipliers(block: object, base: CacheMultipliers, where: str) -> CacheMult
     return merged
 
 
+def _provenance(block: dict, where: str) -> tuple[str, str]:
+    """Validate and extract `source` + `checked_on` from a rate block (§SD2).
+
+    Rejected rather than defaulted: optional means absent, and absent is the
+    state that let a wrong opus rate sit uncontested from its first commit.
+    """
+    source = block.get("source")
+    if not isinstance(source, str) or not source.startswith(("https://", "http://")):
+        raise ValueError(
+            f"pricing.json {where}.source must be a URL — a source you cannot "
+            f"open is not provenance (ADR-0026 §SD2); got {source!r}"
+        )
+    checked_on = block.get("checked_on")
+    if not isinstance(checked_on, str) or not _ISO_DATE.fullmatch(checked_on):
+        raise ValueError(
+            f"pricing.json {where}.checked_on must be an ISO date (YYYY-MM-DD); "
+            f"got {checked_on!r}"
+        )
+    try:
+        date.fromisoformat(checked_on)
+    except ValueError as e:
+        raise ValueError(f"pricing.json {where}.checked_on is not a real date") from e
+    return source, checked_on
+
+
 def load_pricing(path: str) -> PricingRegistry:
     """Read pricing.json and return the resolved registry.
 
@@ -176,9 +227,15 @@ def load_pricing(path: str) -> PricingRegistry:
             "unknown model is not implemented (ADR-0022 §SD2)"
         )
 
-    base_cache = _multipliers(
-        data.get("cache_multipliers"), CacheMultipliers(), "cache_multipliers"
-    )
+    cache_block = data.get("cache_multipliers")
+    base_cache = _multipliers(cache_block, CacheMultipliers(), "cache_multipliers")
+    # Provenance is required for a *committed* block only. Omitting the block
+    # entirely falls back to the module constants above, which are code with a
+    # comment rather than a rate card entry — there is nothing to cite.
+    if isinstance(cache_block, dict):
+        cache_source, cache_checked_on = _provenance(cache_block, "cache_multipliers")
+    else:
+        cache_source, cache_checked_on = "", ""
 
     models_raw = data.get("models")
     if not isinstance(models_raw, dict):
@@ -191,9 +248,12 @@ def load_pricing(path: str) -> PricingRegistry:
             raise ValueError(f"pricing.json {where} must be an object")
         if prices.get("input") is None or prices.get("output") is None:
             raise ValueError(f"pricing.json {where} missing 'input' or 'output'")
+        model_source, model_checked_on = _provenance(prices, where)
         models[model_id] = ModelRate(
             input=_float_field(prices["input"], f"{where}.input"),
             output=_float_field(prices["output"], f"{where}.output"),
+            source=model_source,
+            checked_on=model_checked_on,
             cache=_multipliers(
                 prices.get("cache_multipliers"),
                 base_cache,
@@ -213,7 +273,12 @@ def load_pricing(path: str) -> PricingRegistry:
             )
         aliases[reported_id] = target
 
-    return PricingRegistry(models=models, aliases=aliases)
+    return PricingRegistry(
+        models=models,
+        aliases=aliases,
+        cache_source=cache_source,
+        cache_checked_on=cache_checked_on,
+    )
 
 
 # --- Cost --------------------------------------------------------------------

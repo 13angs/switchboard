@@ -121,6 +121,12 @@ Prints per-session cost, the store total, and any model the rate card cannot
 price. Same code path the board renders from — so it is also the way to check a
 cost figure quoted in a design doc without opening the UI.
 
+Every rate in `pricing.json` must carry a `source` URL and a `checked_on` date;
+the loader rejects the file otherwise, and the board shows the oldest of those
+dates in the cost tooltip (ADR-0026). Nothing detects a rate that is simply
+*wrong* — that has no offline oracle, so verification is a human act: open the
+six sources, correct anything that moved, bump `checked_on`, commit.
+
 ## Supported harnesses
 
 **+ New session** in the header asks for a harness, then a provider.

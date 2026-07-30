@@ -54,6 +54,8 @@ class SessionCard:
     # `cost_partial` is set.
     cost_partial: bool = False
     unpriced_models: Optional[List[str]] = None
+    # Oldest rate-verification date behind the figure (ADR-0026 §SD3).
+    rates_checked_on: Optional[str] = None
     harness: Optional[str] = "claude"
     provider: Optional[str] = "claude"
     worktree_path: Optional[str] = None
@@ -155,6 +157,7 @@ def _summary_to_card(s, now, archive_entries, pr_by_branch) -> SessionCard:
         # fields on their own construction paths.
         cost_partial=bool(getattr(s, "cost_partial", False)),
         unpriced_models=list(getattr(s, "unpriced_models", None) or []),
+        rates_checked_on=getattr(s, "rates_checked_on", None),
         harness=s.harness,
         provider=s.provider,
         worktree_path=s.cwd,

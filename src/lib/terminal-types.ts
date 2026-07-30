@@ -22,6 +22,7 @@ export interface SessionInfo {
   /** Cost state — ADR-0022 §SD2/§SD4. See SessionCard for the full contract. */
   cost_partial?: boolean;
   unpriced_models?: string[] | null;
+  rates_checked_on?: string | null;
   age: string;
   status: 'connecting' | 'connected' | 'ended' | 'waiting';
   /** Session health score — Branch C, ADR-0016. null when jsonl unreadable. */
