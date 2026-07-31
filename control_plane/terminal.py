@@ -63,6 +63,10 @@ class PtyTerminal:
         fd: master PTY file descriptor
         pid: child process PID
         session_id: Claude session id (may be set later for fresh sessions)
+        attach_key: server-assigned key that identifies this PTY from the
+            moment it is spawned — the reconnect handle for a fresh session,
+            whose `session_id` does not exist until the harness writes its
+            jsonl (ADR-0028 §SD1). Set by the registry, not by this class.
         closed: True once the child has exited and the reader has reaped it
         exit_code: child exit code (set on close)
     """
@@ -81,6 +85,7 @@ class PtyTerminal:
         self.fd = fd
         self.pid = pid
         self.session_id = session_id
+        self.attach_key: Optional[str] = None
         self.harness = harness_name
         self.provider = provider
         self._output_observer = output_observer

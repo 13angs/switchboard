@@ -73,6 +73,14 @@ def test_pty_output_is_binary_control_is_text():
         )
         s.recv(1024)  # 101 switching protocols
 
+        # ADR-0028 §SD1 — the attach key leads, so a socket that dies moments
+        # from now still leaves the browser something to reconnect with.
+        op, d = _frame(s)
+        assert op == 0x1, f"attach control must be TEXT(0x1), got {op:#x}"
+        attach = json.loads(d)
+        assert attach.get("type") == "attach"
+        assert attach.get("key"), "attach frame must carry a key"
+
         op, d = _frame(s)
         assert op == 0x1, f"session_id control must be TEXT(0x1), got {op:#x}"
         assert json.loads(d).get("type") == "session_id"

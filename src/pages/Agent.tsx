@@ -39,13 +39,21 @@ function initialAgentView(): AgentView {
   return 'terminal';
 }
 
+/**
+ * ADR-0028 §SD1 — a fresh session has no `session_id` until the harness writes
+ * its jsonl, so during that window `attach_key` is the only thing that names
+ * the PTY we are already talking to. Without it a reconnect looks exactly like
+ * a first connect, and the server answers with a brand-new session.
+ */
 function buildWsUrl(
   sessionId: string | null,
   harness: string | null,
-  provider: string | null
+  provider: string | null,
+  attachKey: string | null
 ): string {
   const params = new URLSearchParams();
   if (sessionId) params.set('session_id', sessionId);
+  else if (attachKey) params.set('attach_key', attachKey);
   if (harness) params.set('harness', harness);
   if (provider) params.set('provider', provider);
   const qs = params.toString();
@@ -160,6 +168,11 @@ export function AgentPage() {
   /** Last size xterm reported — replayed to the PTY after a reconnect it never
    *  learned about (ADR-0027 §SD5). */
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  /** Server-issued handle for the PTY this tab is attached to. A ref, not
+   *  state: it must be readable at reconnect time without re-rendering, and
+   *  arriving it must not itself tear down a healthy socket (ADR-0028 §SD1). */
+  const attachKeyRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(initialSessionId);
   /** `send` is produced by the hook below, but onOpen is an argument to it. */
   const wsSendRef = useRef<((data: string) => void) | null>(null);
 
@@ -301,9 +314,23 @@ export function AgentPage() {
     [sessionId, status]
   );
 
-  const wsUrl = buildWsUrl(sessionId, harness, provider);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  // The socket's identity for the life of this page. It deliberately does NOT
+  // move when the session_id arrives: the id turning up mid-session used to
+  // change this string and tear down a perfectly healthy socket. Where to
+  // reconnect *to* is answered at connect time by `resolveUrl` instead — a
+  // session switch is a full page navigation, so nothing else needs the churn.
+  const wsUrl = buildWsUrl(initialSessionId, harness, provider, null);
+  const resolveWsUrl = useCallback(
+    () => buildWsUrl(sessionIdRef.current, harness, provider, attachKeyRef.current),
+    [harness, provider]
+  );
   const { send: wsSend, close: wsClose } = useWebSocket({
     url: wsUrl,
+    resolveUrl: resolveWsUrl,
     enabled: terminalMounted,
     binaryType: 'arraybuffer',
     onMessage: useCallback(
@@ -322,7 +349,9 @@ export function AgentPage() {
         }
         try {
           const ctl = JSON.parse(data);
-          if (ctl.type === 'session_id' && ctl.id) {
+          if (ctl.type === 'attach' && ctl.key) {
+            attachKeyRef.current = ctl.key;
+          } else if (ctl.type === 'session_id' && ctl.id) {
             const sid = ctl.id;
             setSessionId(sid);
             setStatus('connected');
