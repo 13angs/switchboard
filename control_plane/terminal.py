@@ -6,9 +6,14 @@ only).
 Lifecycle (v2.1): the PTY is decoupled from any single WebSocket connection.
 A PtyTerminal owns a persistent read thread that runs for the life of the child
 process and forwards stdout to *the currently attached subscriber* (a WebSocket
-connection), or drops it when none is attached (detached). This is what lets a
-session survive detach — closing the browser detaches the subscriber but leaves
-the PTY running, so a later reconnect re-attaches to the same live process.
+connection). This is what lets a session survive detach — closing the browser
+detaches the subscriber but leaves the PTY running, so a later reconnect
+re-attaches to the same live process.
+
+Output produced while nothing is attached is not lost: it accumulates in a
+bounded ring buffer that `attach()` replays to the next subscriber, so a
+reconnect lands on a screen with context rather than a blank one (ADR-0027
+§SD3). See `attach()` for the limits of that replay.
 
 The session registry (server.py) keys live PtyTerminals by session_id; kill
 (SIGTERM) and reconnect (re-attach) both go through it.
@@ -43,6 +48,12 @@ class Subscriber(Protocol):
 def _winsz(rows: int, cols: int) -> bytes:
     """Pack a `struct winsize` — unsigned short rows × cols × xpix × ypix."""
     return struct.pack("HHHH", rows, cols, 0, 0)
+
+
+# ADR-0027 §SD3 — how much recent PTY output to keep for replay on re-attach.
+# Bounded and in-memory: it is a screen-restoration aid, not a transcript (the
+# jsonl store is the transcript).
+REPLAY_BUFFER_BYTES = 256 * 1024
 
 
 class PtyTerminal:
@@ -80,14 +91,35 @@ class PtyTerminal:
         self._sub: Optional[Subscriber] = None
         self._lock = threading.Lock()
         self._reader: Optional[threading.Thread] = None
+        # Recent output, kept whether or not anyone is attached (ADR-0027 §SD3).
+        self._replay = bytearray()
 
     # --- subscriber (connection) management ------------------------------
 
     def attach(self, sub: Subscriber) -> None:
-        """Attach a subscriber. If the child already exited, notify at once."""
+        """Attach a subscriber, replaying recent output first. If the child
+        already exited, notify at once.
+
+        ADR-0027 §SD3: the replay is what makes a reconnect land on a screen
+        with context instead of a blank one — a blank screen is why a detached
+        session used to get killed and resumed rather than re-attached.
+
+        **It is best-effort, not a faithful screen.** Full-screen TUIs run on
+        the terminal's alternate screen buffer, which discards everything that
+        scrolls out of the viewport, so a byte buffer that begins mid-stream can
+        replay a partial escape-sequence state and render something cosmetically
+        wrong. The next full redraw corrects it. Do not treat this buffer as
+        authoritative for what the screen contains.
+        """
         with self._lock:
             self._sub = sub
             closed, code = self.closed, self.exit_code
+            replay = bytes(self._replay)
+        if replay:
+            try:
+                sub.on_data(replay)
+            except Exception:
+                pass
         if closed:
             try:
                 sub.on_exit(code)
@@ -120,6 +152,12 @@ class PtyTerminal:
             except Exception:
                 pass
         with self._lock:
+            # Buffer unconditionally — output produced while detached is
+            # exactly what a reconnecting client needs (ADR-0027 §SD3).
+            self._replay.extend(data)
+            overflow = len(self._replay) - REPLAY_BUFFER_BYTES
+            if overflow > 0:
+                del self._replay[:overflow]
             sub = self._sub
         if sub:
             try:

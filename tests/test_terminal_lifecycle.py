@@ -101,14 +101,18 @@ def test_reconnect_survives_detach_then_kill_cleans_up():
         time.sleep(0.3)
         assert term.is_alive(), "PTY died on detach (should survive)"
 
-        # reconnect — new subscriber gets NEW output (no replay of sub1's data)
+        # reconnect — new subscriber is seeded with the buffered scrollback
+        # (ADR-0027 §SD3 reversed the original v2.1 "no replay" behaviour) and
+        # then continues to receive live output.
         sub2 = FakeSub()
         term.attach(sub2)
+        assert b"ping" in sub2.data, (
+            f"replay buffer not delivered on attach: {bytes(sub2.data)!r}"
+        )
         term.write(b"pong\n")
         assert sub2.wait_for(b"pong"), (
             f"reconnected subscriber got no complete echo: {bytes(sub2.data)!r}"
         )
-        assert b"ping" not in sub2.data, "unexpected replay to reconnected sub"
 
         # kill — child dies, reader reaps, on_close + on_exit fire
         term.terminate()
@@ -131,6 +135,53 @@ def test_detach_guard_ignores_stale_subscriber():
         term.write(b"live\n")
         assert new.wait_for(b"live"), (
             f"current subscriber wrongly detached: {bytes(new.data)!r}"
+        )
+    finally:
+        term.terminate()
+
+
+def test_output_produced_while_detached_is_replayed_on_attach():
+    """ADR-0027 §SD3 — the case the owner actually hits: the browser tab is
+    discarded, the PTY keeps working, and the reconnecting client must not land
+    on a blank screen."""
+    term, _ = _spawn()
+    try:
+        sub1 = FakeSub()
+        term.attach(sub1)
+        term.write(b"before-detach\n")
+        assert sub1.wait_for(b"before-detach")
+
+        term.detach(sub1)
+        # Output with nobody attached — this is what used to be dropped.
+        term.write(b"while-detached\n")
+        time.sleep(0.3)
+        assert b"while-detached" not in sub1.data, "detached sub still receiving"
+
+        sub2 = FakeSub()
+        term.attach(sub2)
+        assert b"while-detached" in sub2.data, (
+            f"output produced while detached was lost: {bytes(sub2.data)!r}"
+        )
+    finally:
+        term.terminate()
+
+
+def test_replay_buffer_is_bounded():
+    """The buffer is a screen aid, not a transcript — it must not grow without
+    limit on a long-running session (ADR-0027 §SD3)."""
+    term, _ = _spawn()
+    try:
+        chunk = b"x" * 4096
+        written = 0
+        target = terminal.REPLAY_BUFFER_BYTES * 2
+        while written < target:
+            term.write(chunk + b"\n")
+            written += len(chunk)
+            time.sleep(0.005)
+        time.sleep(0.5)
+        size = len(term._replay)  # noqa: SLF001 — the bound is the contract
+        assert size <= terminal.REPLAY_BUFFER_BYTES, (
+            f"replay buffer grew past its cap: {size}"
         )
     finally:
         term.terminate()

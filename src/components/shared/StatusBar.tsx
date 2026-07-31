@@ -6,6 +6,7 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   connected: 'connected',
   ended: 'session ended',
   waiting: 'waiting…',
+  reconnecting: 'reconnecting… (input is not being sent)',
 };
 
 export const StatusBar: FC<StatusBarProps> = ({ status, sessionId }) => {

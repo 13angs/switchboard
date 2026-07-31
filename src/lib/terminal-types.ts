@@ -24,7 +24,7 @@ export interface SessionInfo {
   unpriced_models?: string[] | null;
   rates_checked_on?: string | null;
   age: string;
-  status: 'connecting' | 'connected' | 'ended' | 'waiting';
+  status: 'connecting' | 'connected' | 'ended' | 'waiting' | 'reconnecting';
   /** Session health score — Branch C, ADR-0016. null when jsonl unreadable. */
   health?: import('./types').HealthScore | null;
 }
@@ -38,8 +38,16 @@ export interface FileEntry {
   staged: boolean;
 }
 
-/** Status for StatusGlyph / StatusBar */
-export type SessionStatus = 'connecting' | 'connected' | 'ended' | 'waiting';
+/** Status for StatusGlyph / StatusBar.
+ *  `reconnecting` — the socket dropped and the client is retrying (ADR-0027
+ *  §SD5). It exists so a dropped connection is never silent: input typed in
+ *  this state is discarded, and the user has to be able to see that. */
+export type SessionStatus =
+  | 'connecting'
+  | 'connected'
+  | 'ended'
+  | 'waiting'
+  | 'reconnecting';
 export type SessionDrawerView = 'active' | 'archive';
 export type SessionAlertKind = 'approval' | 'ready';
 

@@ -100,6 +100,10 @@ def _serve_static(path: str) -> Optional[Path]:
 _registry: dict[str, terminal.PtyTerminal] = {}
 _reg_lock = threading.Lock()
 
+# ADR-0027 §SD1 — how often the server pings an attached client. Bounds how long
+# a connection lost without a close frame keeps a thread and socket alive.
+_WS_PING_INTERVAL_S = 30.0
+
 # Model-provider config from projects/switchboard/repos/switchboard/.env — read ONCE at start (C3).
 _ENV_FILE = config.load_env_file()
 _NOTIFICATION_HUB = notifications.NotificationHub()
@@ -559,6 +563,9 @@ class _WsSubscriber:
     def pong(self, payload: bytes) -> None:
         self._send(ws_handler.encode_pong(payload))
 
+    def ping(self, payload: bytes = b"") -> None:
+        self._send(ws_handler.encode_ping(payload))
+
 
 def _handle_ws_upgrade(request: BaseHTTPRequestHandler, repo_root: str) -> None:
     """Handle WebSocket upgrade for /ws/agent → attach to a registry PTY."""
@@ -621,9 +628,19 @@ def _handle_ws_upgrade(request: BaseHTTPRequestHandler, repo_root: str) -> None:
 
     # Main loop: read WebSocket frames → write to PTY.
     buf = b""
+    last_ping = time.monotonic()
     try:
         while sub.alive and term.is_alive():
             ready, _, _ = select.select([sock], [], [], 0.5)
+            # ADR-0027 §SD1 — a peer that vanished without a close frame leaves
+            # this loop reading a socket that will never speak again. A periodic
+            # ping turns that into a write error, which marks the subscriber
+            # dead and detaches; the PTY itself is untouched and waits for the
+            # client's reconnect.
+            now = time.monotonic()
+            if now - last_ping >= _WS_PING_INTERVAL_S:
+                last_ping = now
+                sub.ping()
             if not ready:
                 continue
             try:
@@ -653,6 +670,13 @@ def _handle_ws_upgrade(request: BaseHTTPRequestHandler, repo_root: str) -> None:
                             ctl = json.loads(text)
                             if ctl.get("type") == "resize":
                                 term.resize(ctl.get("rows", 24), ctl.get("cols", 80))
+                                continue
+                            # ADR-0027 §SD2 — the browser cannot send RFC 6455
+                            # ping frames from JS, so its liveness probe arrives
+                            # as an ordinary text frame. Answer it; never write
+                            # it to the PTY.
+                            if ctl.get("type") == "ping":
+                                sub.on_control({"type": "pong"})
                                 continue
                         except json.JSONDecodeError:
                             pass
