@@ -3,6 +3,9 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+/** ADR-0027 §SD5 — trailing debounce for observer-driven fits. */
+const FIT_DEBOUNCE_MS = 50;
+
 // Terminal theme — matches design tokens
 const TERM_THEME = {
   background: '#0c0e12',
@@ -37,6 +40,7 @@ export function useXterm({
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const fitTimerRef = useRef<number | null>(null);
   const onDataRef = useRef(onData);
   const onResizeRef = useRef(onResize);
   onDataRef.current = onData;
@@ -53,6 +57,23 @@ export function useXterm({
       /* ignore */
     }
   }, [containerRef]);
+
+  /**
+   * ADR-0027 §SD5 — debounce the observer-driven fit. Device rotation and the
+   * soft keyboard produce a burst of ResizeObserver callbacks; fitting on every
+   * one moves the viewport ahead of the PTY it has to agree with, and cells
+   * rendered against a size the backend has not applied yet come out corrupted.
+   * Explicit `fit()` calls (view switch, reconnect) stay immediate.
+   */
+  const scheduleFit = useCallback(() => {
+    if (fitTimerRef.current !== null) {
+      window.clearTimeout(fitTimerRef.current);
+    }
+    fitTimerRef.current = window.setTimeout(() => {
+      fitTimerRef.current = null;
+      fit();
+    }, FIT_DEBOUNCE_MS);
+  }, [fit]);
 
   /** Write raw bytes to the terminal (PTY output). */
   const write = useCallback((data: Uint8Array | string) => {
@@ -73,6 +94,10 @@ export function useXterm({
 
   const dispose = useCallback(() => {
     resizeObserverRef.current?.disconnect();
+    if (fitTimerRef.current !== null) {
+      window.clearTimeout(fitTimerRef.current);
+      fitTimerRef.current = null;
+    }
     try {
       termRef.current?.dispose();
     } catch {
@@ -100,8 +125,8 @@ export function useXterm({
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
 
-    // ResizeObserver for container size changes
-    const ro = new ResizeObserver(() => fit());
+    // ResizeObserver for container size changes (debounced — ADR-0027 §SD5)
+    const ro = new ResizeObserver(() => scheduleFit());
     ro.observe(container);
     resizeObserverRef.current = ro;
 
@@ -120,13 +145,17 @@ export function useXterm({
 
     return () => {
       ro.disconnect();
+      if (fitTimerRef.current !== null) {
+        window.clearTimeout(fitTimerRef.current);
+        fitTimerRef.current = null;
+      }
       try {
         term.dispose();
       } catch {
         /* ignore */
       }
     };
-  }, [containerRef, fontSize, fontFamily, fit]);
+  }, [containerRef, fontSize, fontFamily, fit, scheduleFit]);
 
   return { write, writeln, fit, dispose };
 }

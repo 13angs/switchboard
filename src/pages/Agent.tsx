@@ -157,6 +157,11 @@ export function AgentPage() {
   } | null>(null);
   const outputDecoderRef = useRef(new TextDecoder());
   const outputScanRef = useRef('');
+  /** Last size xterm reported — replayed to the PTY after a reconnect it never
+   *  learned about (ADR-0027 §SD5). */
+  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  /** `send` is produced by the hook below, but onOpen is an argument to it. */
+  const wsSendRef = useRef<((data: string) => void) | null>(null);
 
   const applyTranscriptMessages = useCallback((incoming: Message[], replace = false) => {
     setMessages((prev) => {
@@ -343,13 +348,37 @@ export function AgentPage() {
     ),
     onOpen: useCallback(() => {
       termApiRef.current?.fit();
+      // The PTY we just (re)attached to may have been spawned against a
+      // different window size, and xterm will not re-emit onResize if its own
+      // dimensions did not change. Restate them (ADR-0027 §SD5).
+      const size = lastSizeRef.current;
+      if (size) {
+        wsSendRef.current?.(
+          JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows })
+        );
+      }
+      setStatus((prev) => (prev === 'ended' ? prev : 'connected'));
     }, []),
+    // ADR-0027 §SD5 — a dropped socket must never look like a working one.
+    onClose: useCallback(() => {
+      setStatus((prev) => (prev === 'ended' ? prev : 'reconnecting'));
+    }, []),
+    onError: useCallback(() => {
+      setStatus((prev) => (prev === 'ended' ? prev : 'reconnecting'));
+    }, []),
+    // A finished child process is not something to retry into (ADR-0027 §SD1).
+    stopped: ended,
   });
+
+  useEffect(() => {
+    wsSendRef.current = wsSend;
+  }, [wsSend]);
 
   const handleData = useCallback((data: string) => wsSend(data), [wsSend]);
 
   const handleResize = useCallback(
     (cols: number, rows: number) => {
+      lastSizeRef.current = { cols, rows };
       wsSend(JSON.stringify({ type: 'resize', cols, rows }));
     },
     [wsSend]
@@ -393,7 +422,14 @@ export function AgentPage() {
         ]);
         if (!active) return;
         setChatState('ready');
-        setStatus('connected');
+        // A successful transcript read proves the HTTP API is alive; it says
+        // nothing about the terminal's WebSocket. Do not overwrite a live
+        // socket state with it — this effect re-runs on every status change,
+        // so an unconditional 'connected' here erases 'reconnecting' the
+        // instant it is set (ADR-0027 §SD5).
+        setStatus((prev) =>
+          prev === 'reconnecting' || prev === 'ended' ? prev : 'connected'
+        );
       } catch {
         if (active && lastTsRef.current === null) {
           setChatState('error');

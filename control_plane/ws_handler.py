@@ -120,3 +120,10 @@ def encode_close(code: int = 1000) -> bytes:
 
 def encode_pong(payload: bytes = b"") -> bytes:
     return encode_frame(_OP_PONG, payload)
+
+
+def encode_ping(payload: bytes = b"") -> bytes:
+    """Server → client ping. The browser answers automatically; a peer that has
+    gone away instead surfaces as a write error, which is how a connection lost
+    without a close frame gets reaped (ADR-0027 §SD1)."""
+    return encode_frame(_OP_PING, payload)
