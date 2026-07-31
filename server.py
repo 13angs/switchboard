@@ -31,13 +31,19 @@ Endpoints:
     POST /sessions/undismiss          -> {ok, session_ids[], count}
     POST /session/<id>/kill           -> {ok, session_id, killed}
     GET  /ws/agent?session_id=<id>    -> WebSocket upgrade → PTY (registry-backed;
-                                         /ws/shell reserved for the future board
+         /ws/agent?attach_key=<key>      /ws/shell reserved for the future board
                                          shell terminal, ADR-0003)
 
 Session lifecycle (v2.1): PTYs live in an in-memory registry keyed by session_id,
 decoupled from WebSocket connections. Closing a WebSocket *detaches* (PTY keeps
 running); an explicit kill terminates it; a reconnect re-attaches to the live PTY
 or, if it died while detached, respawns via `claude --resume`.
+
+v2.4 (ADR-0028): a *fresh* session has no session_id until the harness writes its
+jsonl, so the registry also keys every PTY by a server-assigned `attach_key`
+handed to the browser at attach. A reconnect during that window carries the key
+and re-attaches; without it the reconnect looked like a first connect and spawned
+a second PTY, orphaning the first.
 """
 
 from __future__ import annotations
@@ -50,6 +56,7 @@ import select
 import struct
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -95,10 +102,30 @@ def _serve_static(path: str) -> Optional[Path]:
 
 # --- session registry ----------------------------------------------------
 # In-memory only (ephemeral by decision — not persisted across server restart;
-# pid/fd can't be serialized anyway). Keyed by session_id; fresh sessions are
-# keyed by a temporary "pending:<pid>" until their id is discovered, then re-keyed.
+# pid/fd can't be serialized anyway). Keyed by session_id once known, and by an
+# `attach_key` ("attach:<uuid>") for the whole life of every PTY — the two are
+# aliases for the same object, and `_drop_from_registry` removes both by
+# identity when the child exits.
+#
+# ADR-0028 §SD1: the attach_key exists because session_id does not, yet. A fresh
+# session's id only appears when the harness writes its jsonl (first prompt, or
+# never for an idle session), and until then the browser has nothing to reconnect
+# *with* — which is what made every reconnect in that window spawn a duplicate.
 _registry: dict[str, terminal.PtyTerminal] = {}
 _reg_lock = threading.Lock()
+
+
+class AttachKeyUnknown(Exception):
+    """A reconnect presented an attach_key no live PTY answers to — the session
+    died while detached. Never spawn on this: the client asked for *that* PTY,
+    and silently handing it a brand-new one is the bug ADR-0028 fixes."""
+
+# ADR-0028 §SD2 — id-capture poll cadence. Fast while a first prompt is
+# plausibly imminent, then slow forever: an idle session must still get its id
+# whenever it finally produces one, and the cost of waiting is one glob.
+_ID_CAPTURE_POLL_S = 0.5
+_ID_CAPTURE_IDLE_POLL_S = 3.0
+_ID_CAPTURE_FAST_WINDOW_S = 30
 
 # ADR-0027 §SD1 — how often the server pings an attached client. Bounds how long
 # a connection lost without a close frame keeps a thread and socket alive.
@@ -441,29 +468,43 @@ def _store_for(harness_name: str):
     return claude_store
 
 
-def _start_id_capture(term: terminal.PtyTerminal, cwd: str, temp_key: str) -> None:
+def _start_id_capture(term: terminal.PtyTerminal, cwd: str) -> None:
     """For a fresh session (no id at spawn), poll the project dir for the new
-    jsonl, then re-key the registry from `temp_key` to the real session_id and
-    push it to the browser. Resolves HLD open-question #1."""
+    jsonl, then register the real session_id and push it to the browser.
+    Resolves HLD open-question #1.
+
+    ADR-0028 §SD2 — this poll runs for as long as the child lives. It used to
+    give up after 30 seconds, which is shorter than a person can plausibly take
+    to type their first prompt: a session opened and left idle past the deadline
+    never got an id at all, so the board could not list it, the transcript could
+    not load, and (before §SD1) every reconnect spawned a duplicate. The poll
+    backs off instead of stopping — an idle PTY costs one `glob` every few
+    seconds, and stopping costs the session its identity.
+
+    The pre-spawn `attach_key` stays in the registry as an alias so a reconnect
+    that raced the id discovery still lands on this same PTY.
+    """
     store = _store_for(term.harness)
     pre_existing = store.existing_session_ids_for_cwd(cwd)
-    deadline = time.time() + 30
+    fast_until = time.time() + _ID_CAPTURE_FAST_WINDOW_S
 
     def run():
-        while time.time() < deadline and term.is_alive() and term.session_id is None:
+        while term.is_alive() and term.session_id is None:
             sid = store.newest_session_id_for_cwd(cwd, exclude=pre_existing)
             if sid:
                 term.session_id = sid
                 with _reg_lock:
-                    if _registry.get(temp_key) is term:
-                        _registry.pop(temp_key, None)
                     _registry[sid] = term
                 # Persist Claude provider lock next to the new session's jsonl.
                 if term.harness == "claude":
                     claude_store.write_provider(sid, cwd, term.provider)
                 term.notify_session_id(sid)
                 return
-            time.sleep(0.5)
+            time.sleep(
+                _ID_CAPTURE_POLL_S
+                if time.time() < fast_until
+                else _ID_CAPTURE_IDLE_POLL_S
+            )
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -474,21 +515,42 @@ def _get_or_spawn(
     harness_name: str = "claude",
     provider: str = "claude",
     child_env: Optional[dict] = None,
+    attach_key: Optional[str] = None,
 ) -> tuple[terminal.PtyTerminal, bool]:
     """Return (terminal, reused). Reuse a live registered terminal for
-    session_id; else spawn (injecting the provider env) + register + start
-    reader (+ id capture for fresh).
+    session_id or attach_key; else spawn (injecting the provider env) +
+    register + start reader (+ id capture for fresh).
 
     v2.3: Before spawning a *resume* (session_id given, not in registry),
     probes for an external live holder of the same session in `cwd` — a native
     harness session or another server instance already writing the same jsonl.
-    Raises `lock.SessionBusy(pid)` if found (prevents two-writer corruption)."""
+    Raises `lock.SessionBusy(pid)` if found (prevents two-writer corruption).
+
+    v2.4 (ADR-0028 §SD1): resolution order is session_id → attach_key → spawn.
+    An attach_key that resolves to nothing raises `AttachKeyUnknown` rather than
+    falling through to a spawn — a client holding a key is reconnecting, and the
+    only honest answers are "here is your PTY" or "it is gone"."""
     with _reg_lock:
         term = _registry.get(session_id) if session_id else None
         if term is not None and not term.is_alive():
             # Stale: child died while detached (B7) — drop and respawn.
             _registry.pop(session_id, None)
             term = None
+        if term is None and attach_key and not session_id:
+            # Only consulted while the session has no id of its own. With an id
+            # in hand, a missing registry entry means "died while detached" and
+            # the resume path below is the right answer — not an error.
+            candidate = _registry.get(attach_key)
+            if candidate is not None and not candidate.is_alive():
+                _registry.pop(attach_key, None)
+                candidate = None
+            if candidate is None:
+                # No live PTY answers to this key. The session ended while the
+                # browser was away; say so instead of spawning a stranger.
+                raise AttachKeyUnknown(
+                    "the session this tab was attached to is no longer running"
+                )
+            term = candidate
         if term is not None:
             return term, True
 
@@ -517,12 +579,16 @@ def _get_or_spawn(
             input_observer=_LIFECYCLE_DETECTOR.observe_input,
             close_observer=_LIFECYCLE_DETECTOR.stop,
         )
-        key = session_id or f"pending:{term.pid}"
-        _registry[key] = term
+        # Every PTY gets an attach_key, resume or fresh — the browser then has
+        # one handle that is valid from the first byte (ADR-0028 §SD1).
+        term.attach_key = f"attach:{uuid.uuid4().hex[:12]}"
+        _registry[term.attach_key] = term
+        if session_id:
+            _registry[session_id] = term
 
     term.start_reader(_drop_from_registry)
     if not session_id:
-        _start_id_capture(term, cwd, key)
+        _start_id_capture(term, cwd)
     return term, False
 
 
@@ -572,6 +638,9 @@ def _handle_ws_upgrade(request: BaseHTTPRequestHandler, repo_root: str) -> None:
     parsed = urlparse(request.path)
     qs = parse_qs(parsed.query)
     session_id = (qs.get("session_id") or [None])[0]
+    # ADR-0028 §SD1 — the reconnect handle for a session whose id does not exist
+    # yet. Sent back by the browser exactly as it was issued.
+    attach_key = (qs.get("attach_key") or [None])[0]
 
     # Validate upgrade headers
     if request.headers.get("Upgrade", "").lower() != "websocket":
@@ -613,14 +682,26 @@ def _handle_ws_upgrade(request: BaseHTTPRequestHandler, repo_root: str) -> None:
     # v2.3: catch SessionBusy (live external holder) → honest error.
     try:
         term, _reused = _get_or_spawn(
-            session_id, cwd, harness_name, provider, child_env
+            session_id, cwd, harness_name, provider, child_env, attach_key
         )
     except lock.SessionBusy as e:
         sub.on_control({"type": "error", "message": str(e)})
         sub.on_exit(None)
         return
+    except AttachKeyUnknown as e:
+        # ADR-0028 §SD1 — the PTY this tab was attached to is gone. Report it
+        # and close; do NOT spawn a replacement, which is what made a returning
+        # tab land on a blank, brand-new session.
+        sub.on_control({"type": "error", "message": str(e)})
+        sub.on_exit(None)
+        return
     discovery.invalidate_cache(repo_root)
     term.attach(sub)
+
+    # The reconnect handle, valid from the first byte — before any session_id
+    # exists (ADR-0028 §SD1). Sent first so a socket that dies moments later
+    # still leaves the browser able to find its way back.
+    sub.on_control({"type": "attach", "key": term.attach_key})
 
     # Tell the browser the session_id (known for resume; None for a brand-new
     # session until capture pushes it via notify_session_id).

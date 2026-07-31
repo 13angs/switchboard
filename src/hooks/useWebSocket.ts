@@ -22,7 +22,19 @@ const BACKOFF_MAX_MS = 15_000;
 const BACKOFF_JITTER = 0.5;
 
 interface UseWebSocketOpts {
+  /**
+   * The socket's identity. Changing it tears down the current socket and opens
+   * a new one; it is *not* necessarily the address dialled — see `resolveUrl`.
+   */
   url: string;
+  /**
+   * Called at connect time to produce the address to dial, so a reconnect can
+   * carry identity the caller only learned *after* the first connect — for the
+   * terminal, the attach key of a session whose id did not exist yet
+   * (ADR-0028 §SD1). Must be stable (useCallback over refs); falls back to
+   * `url` when absent or when it returns nothing.
+   */
+  resolveUrl?: () => string;
   enabled?: boolean;
   onMessage: (data: ArrayBuffer | string) => void;
   onOpen?: () => void;
@@ -40,6 +52,7 @@ interface UseWebSocketOpts {
 
 export function useWebSocket({
   url,
+  resolveUrl,
   enabled = true,
   onMessage,
   onOpen,
@@ -54,6 +67,7 @@ export function useWebSocket({
   const onOpenRef = useRef(onOpen);
   const onCloseRef = useRef(onClose);
   const onErrorRef = useRef(onError);
+  const resolveUrlRef = useRef(resolveUrl);
   const stoppedRef = useRef(stopped);
   /** Set by close() — a deliberate close must not trigger a reconnect. */
   const deliberateRef = useRef(false);
@@ -63,6 +77,7 @@ export function useWebSocket({
   onOpenRef.current = onOpen;
   onCloseRef.current = onClose;
   onErrorRef.current = onError;
+  resolveUrlRef.current = resolveUrl;
   stoppedRef.current = stopped;
 
   const send = useCallback((data: string | ArrayBuffer | Uint8Array) => {
@@ -165,7 +180,10 @@ export function useWebSocket({
 
     const connect = () => {
       if (halted()) return;
-      const sock = new WebSocket(url);
+      // Resolved per attempt, never captured once: the identity a reconnect
+      // must carry may have arrived after this effect started (ADR-0028 §SD1).
+      const target = resolveUrlRef.current?.() || url;
+      const sock = new WebSocket(target);
       sock.binaryType = binaryType;
       ws = sock;
       wsRef.current = sock;
