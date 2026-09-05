@@ -1,0 +1,296 @@
+/* Work page — v3.0 (ADR-0029). Tokens come from tokens.css, which already
+   carries the light/dark pair; nothing here hard-codes a colour. */
+
+.work {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* ── header ── */
+.work-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.work-header .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.work-header .mark {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.work-header .section {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+.work-header .repo {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.work-header .tabs {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.work-header .tabs a {
+  padding: 4px 11px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.work-header .tabs a:hover {
+  color: var(--fg);
+}
+.work-header .tabs a.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ── subbar ── */
+.work-subbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.work-subbar .provenance {
+  font-size: 12px;
+  color: var(--muted);
+}
+.work-subbar .provenance code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.work-subbar .lag {
+  color: var(--faint);
+  margin-left: 4px;
+}
+.work-subbar .refresh {
+  margin-left: auto;
+  padding: 4px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.work-subbar .refresh:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.work-subbar .refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── gap strip ── */
+.gap-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.gap-strip .gap-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.gap-strip .gap-n.total {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.gap-strip .gap-split {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.gap-strip .closed {
+  color: var(--ok);
+}
+.gap-strip .reduced {
+  color: var(--awaiting);
+}
+.gap-strip .open {
+  color: var(--blocked);
+}
+
+/* ── states ── */
+.work-error {
+  margin: 14px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--blocked-soft);
+  color: var(--blocked);
+  font-size: 13px;
+}
+.work-empty {
+  margin: 40px auto;
+  max-width: 34rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.work-empty .hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.work-empty code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+
+/* ── project ── */
+.project {
+  padding: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.project-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.project-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+.project-head .missing {
+  font-size: 11px;
+  color: var(--blocked);
+  font-family: var(--mono);
+}
+
+/* ── columns ── */
+.cols {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.col-head .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  flex: none;
+  background: var(--idle);
+}
+.col-head.c-done .dot {
+  background: var(--ok);
+}
+.col-head.c-running .dot {
+  background: var(--working);
+}
+.col-head.c-next .dot {
+  background: var(--accent);
+}
+.col-head.c-owner .dot {
+  background: var(--awaiting);
+}
+.col-head .count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+/* ── card ── */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.card.c-next {
+  border-left: 3px solid var(--accent);
+}
+.card.c-owner {
+  border-left: 3px solid var(--awaiting);
+}
+.card .id {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.card .id em {
+  font-style: normal;
+}
+.card .title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.card .note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.col-empty {
+  color: var(--faint);
+  font-size: 12px;
+  padding: 4px 2px;
+}
+.off-note {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--faint);
+}

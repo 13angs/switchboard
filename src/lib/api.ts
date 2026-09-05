@@ -153,3 +153,41 @@ export async function fetchAnalytics(
   if (!res.ok) throw new Error(`analytics ${res.status}`);
   return res.json();
 }
+
+// ── Workspace overview (v3.0, ADR-0029) ──
+
+export interface WorkspaceSlice {
+  id: string;
+  title: string;
+  day: string;
+  column: string;
+  note: string;
+}
+
+export interface WorkspaceProject {
+  name: string;
+  slices: WorkspaceSlice[];
+  columns: Record<string, number>;
+  has: { scope: boolean; risks: boolean; hld: boolean };
+}
+
+export interface WorkspaceResponse {
+  generated_at: string;
+  repo: string;
+  head: string;
+  stale_by: string;
+  projects: WorkspaceProject[];
+  totals: {
+    projects_with_slices: number;
+    slices: Record<string, number>;
+  };
+  gaps:
+    | { present: false }
+    | { present: true; total: number; closed: number; reduced: number; open: number };
+}
+
+export async function fetchWorkspace(refresh = false): Promise<WorkspaceResponse> {
+  const res = await fetch(`${BASE}/workspace${refresh ? '?refresh=1' : ''}`);
+  if (!res.ok) throw new Error(`workspace ${res.status}`);
+  return res.json();
+}
