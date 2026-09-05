@@ -19,6 +19,8 @@ Endpoints:
     GET  /state                       -> {generated_at, repo, sessions[], activities[]}
     GET  /events                      -> Server-Sent Events for lifecycle notifications
     GET  /health                      -> {ok: true}
+    GET  /work                        -> work board page (work.html) (ADR-0029)
+    GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
@@ -77,6 +79,7 @@ from control_plane import (
     pricing,
     state,
     terminal,
+    workspace,
     ws_handler,
 )
 
@@ -119,6 +122,7 @@ class AttachKeyUnknown(Exception):
     """A reconnect presented an attach_key no live PTY answers to — the session
     died while detached. Never spawn on this: the client asked for *that* PTY,
     and silently handing it a brand-new one is the bug ADR-0028 fixes."""
+
 
 # ADR-0028 §SD2 — id-capture poll cadence. Fast while a first prompt is
 # plausibly imminent, then slow forever: an idle session must still get its id
@@ -874,6 +878,15 @@ def make_handler(repo_root: str):
                     self._json(404, {"error": "not found"})
             elif path == "/analytics/files":
                 self._analytics_files(repo_root)
+            elif path == "/work":
+                # Work page — static HTML (v3.0, ADR-0029)
+                f = _serve_static("work.html")
+                if f:
+                    self._send(200, f.read_bytes(), "text/html; charset=utf-8")
+                else:
+                    self._json(404, {"error": "not found"})
+            elif path == "/workspace":
+                self._workspace(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -997,6 +1010,23 @@ def make_handler(repo_root: str):
                 return
             try:
                 result = analytics.files_analytics(repo_root, days, harness_param)
+                self._json(200, result)
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+
+        def _workspace(self, repo_root: str):
+            """GET /workspace — structural overview from the repo tree (ADR-0029).
+
+            Second data source alongside the session stores: reads committed
+            markdown, so it lags un-merged work by one PR and says so in the
+            payload rather than implying live state.
+            """
+            qs = parse_qs(urlparse(self.path).query)
+            fresh = (qs.get("refresh") or [""])[0] in ("1", "true", "yes")
+            try:
+                result = workspace.workspace_overview(repo_root, use_cache=not fresh)
                 self._json(200, result)
             except ValueError as e:
                 self._json(400, {"error": str(e)})
