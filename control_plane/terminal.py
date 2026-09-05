@@ -271,6 +271,7 @@ def spawn_harness(
     rows: int = 24,
     cols: int = 80,
     provider: str = "claude",
+    model: Optional[str] = None,
     env: Optional[dict] = None,
     output_observer: Optional[Callable[[PtyTerminal, bytes], None]] = None,
     input_observer: Optional[Callable[[PtyTerminal, bytes], None]] = None,
@@ -283,11 +284,13 @@ def spawn_harness(
         session_id: If given, resume that session. If None, fresh session.
         cwd: Working directory for the process.
         rows, cols: Initial terminal dimensions.
+        model: Pin the session's model (ADR-0030). Fresh spawns only — a resume
+            re-enters a session that already has one.
 
     The caller must call `start_reader()` (after registering) to begin I/O.
     """
     cwd_arg = cwd or os.getcwd()
-    cmd = harness.build_command(harness_name, session_id, cwd_arg, provider)
+    cmd = harness.build_command(harness_name, session_id, cwd_arg, provider, model)
 
     pid, fd = pty.fork()
     if pid == 0:

@@ -294,3 +294,193 @@
   font-size: 11px;
   color: var(--faint);
 }
+
+/* ── dispatch button on a card ── */
+.card .dispatch {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.card:hover .dispatch,
+.card .dispatch:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── dispatch dialog ── */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(3px);
+}
+.dlg {
+  width: min(700px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.dlg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.dlg-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.dlg-head code {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+.dlg-x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.dlg-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dlg-roles .role {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dlg-roles .role.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.dlg-roles .rtier {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+/* heavy is the most expensive tier, not an error state — accent, never red. */
+.dlg-roles .rtier.t-heavy {
+  color: var(--accent);
+}
+.dlg-roles .rtier.t-standard {
+  color: var(--ok);
+}
+.dlg-roles .rtier.t-light {
+  color: var(--awaiting);
+}
+.dlg-model {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dlg-model code {
+  font-family: var(--mono);
+  color: var(--fg);
+}
+.dlg-model .src {
+  color: var(--faint);
+  font-size: 11px;
+}
+.dlg-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.dlg-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.dlg-error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--blocked-soft);
+  color: var(--blocked);
+  font-size: 12px;
+}
+.dlg-blocked {
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--blocked-soft);
+  font-size: 13px;
+}
+.dlg-blocked p {
+  margin: 0 0 6px;
+}
+.dlg-blocked .why {
+  color: var(--muted);
+  font-size: 12px;
+}
+.dlg-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dlg-note {
+  font-size: 11px;
+  color: var(--faint);
+  margin-right: auto;
+}
+.dlg-cancel,
+.dlg-go {
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dlg-cancel {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+}
+.dlg-go {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.dlg-go:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
