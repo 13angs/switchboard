@@ -102,17 +102,40 @@ export async function fetchFileContent(
   return res.json();
 }
 
+export interface StartSessionOptions {
+  /** Pins the tier (ADR-0030). Omitting it inherits the model of whatever
+   *  launched the server — not a safer default, just an unstated one. */
+  model?: string;
+  /** Typed into the PTY and left unsent; a person presses Enter. */
+  prompt?: string;
+}
+
+export interface StartSessionResponse {
+  session_id: string | null;
+  session_started: boolean;
+  harness?: string;
+  provider?: string;
+  model?: string | null;
+  prompt_typed?: boolean;
+  message?: string;
+}
+
 export async function startSession(
   harness: string,
   provider: string,
-  label?: string
-): Promise<{ session_id: string | null; session_started: boolean }> {
+  label?: string,
+  options?: StartSessionOptions
+): Promise<StartSessionResponse> {
   const res = await fetch(`${BASE}/session/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ harness, provider, label }),
+    body: JSON.stringify({ harness, provider, label, ...options }),
   });
-  return res.json();
+  const data = await res.json().catch(() => null);
+  // The spawn path rejects an unknown model rather than quietly ignoring it —
+  // surface that instead of returning a body with no session in it.
+  if (!res.ok) throw new Error(data?.error || `session/start ${res.status}`);
+  return data as StartSessionResponse;
 }
 
 // ── Analytics (v2.5) ──
@@ -168,8 +191,21 @@ export interface WorkspaceProject {
   name: string;
   slices: WorkspaceSlice[];
   columns: Record<string, number>;
+  /** From the project's own slices.md frontmatter — used to build the Assignment id. */
+  client: string;
+  team: string;
   has: { scope: boolean; risks: boolean; hld: boolean };
 }
+
+/** Role → tier → model, read from the workspace (ADR-0030 §SD1). Never held here. */
+export type WorkspaceDispatch =
+  | { present: false; reason: string }
+  | {
+      present: true;
+      tiers: Record<string, string>;
+      roles: { role: string; tier: string; model: string }[];
+      source: { tiers: string; roles: string };
+    };
 
 export interface WorkspaceResponse {
   generated_at: string;
@@ -184,7 +220,9 @@ export interface WorkspaceResponse {
   gaps:
     | { present: false }
     | { present: true; total: number; closed: number; reduced: number; open: number };
+  dispatch: WorkspaceDispatch;
 }
+
 
 export async function fetchWorkspace(refresh = false): Promise<WorkspaceResponse> {
   const res = await fetch(`${BASE}/workspace${refresh ? '?refresh=1' : ''}`);

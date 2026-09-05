@@ -26,6 +26,9 @@ Endpoints:
                                          args_summary, args, ts, duration_ms,
                                          duration_state, result_summary, result_ts}]}
     POST /session/start               -> spawn a fresh harness PTY
+                                         body {harness?, provider?, model?, prompt?}
+                                         model pins the tier (ADR-0030); prompt is
+                                         typed into the PTY and left unsent
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
@@ -278,6 +281,34 @@ def _chat_message_payload(text: str, harness_name: str) -> bytes:
     return (text + submit).encode("utf-8")
 
 
+# How long to let a freshly spawned TUI draw its input box before typing into
+# it. Below this the keystrokes land before the box exists and are swallowed.
+_PROMPT_SETTLE_S = 1.5
+
+
+def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
+    """Type a prepared prompt into a fresh PTY — and deliberately not send it.
+
+    The submit key is withheld on purpose (ADR-0030 SD3). The board's job is to
+    assemble the context; deciding that the work should actually start is a
+    person's, and the difference between the two is exactly one keystroke this
+    server does not press. `_chat_message_payload` appends that keystroke; this
+    path must never call it.
+
+    Returns whether the text reached the PTY. A failure here is not fatal to the
+    spawn: the session is already live and usable, the operator just has an
+    empty input box, so it is reported rather than raised.
+    """
+    if not term.is_alive():
+        return False
+    time.sleep(_PROMPT_SETTLE_S)
+    try:
+        term.write(prompt.encode("utf-8"))
+    except OSError:
+        return False
+    return True
+
+
 def _transcript_source(
     session_id: str, repo_root: str
 ) -> tuple[str, Path] | tuple[None, None]:
@@ -520,6 +551,7 @@ def _get_or_spawn(
     provider: str = "claude",
     child_env: Optional[dict] = None,
     attach_key: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> tuple[terminal.PtyTerminal, bool]:
     """Return (terminal, reused). Reuse a live registered terminal for
     session_id or attach_key; else spawn (injecting the provider env) +
@@ -533,7 +565,11 @@ def _get_or_spawn(
     v2.4 (ADR-0028 §SD1): resolution order is session_id → attach_key → spawn.
     An attach_key that resolves to nothing raises `AttachKeyUnknown` rather than
     falling through to a spawn — a client holding a key is reconnecting, and the
-    only honest answers are "here is your PTY" or "it is gone"."""
+    only honest answers are "here is your PTY" or "it is gone".
+
+    v3.0 (ADR-0030): `model` pins the tier, and applies to a *fresh* spawn only.
+    A resume re-enters a session that already has a model; re-pinning it here
+    would silently change the tier of work already in flight."""
     with _reg_lock:
         term = _registry.get(session_id) if session_id else None
         if term is not None and not term.is_alive():
@@ -578,6 +614,7 @@ def _get_or_spawn(
             session_id=session_id,
             cwd=cwd,
             provider=provider,
+            model=None if session_id else model,
             env=child_env,
             output_observer=_observe_terminal_output,
             input_observer=_LIFECYCLE_DETECTOR.observe_input,
@@ -1138,7 +1175,13 @@ def make_handler(repo_root: str):
         def _session_start(self, repo_root: str):
             """POST /session/start — spawn a fresh PTY, discover its session_id,
             return {session_id, session_started}. The only spawn surface
-            (ADR-0003; legacy GET /chat spawn removed)."""
+            (ADR-0003; legacy GET /chat spawn removed).
+
+            v3.0 (ADR-0030) adds two optional fields:
+              model  — pins the tier the session runs on, validated against the
+                       lineup the *workspace* declares, never a list held here.
+              prompt — typed into the PTY and left unsent. The board prepares
+                       the work; a person still presses Enter."""
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length <= 0:
                 self._json(400, {"error": "empty body"})
@@ -1155,6 +1198,40 @@ def make_handler(repo_root: str):
                 requested_harness = None
             if not isinstance(requested_provider, str):
                 requested_provider = None
+
+            requested_model = body.get("model")
+            if requested_model is not None and not isinstance(requested_model, str):
+                self._json(400, {"error": "model must be a string"})
+                return
+            requested_model = (requested_model or "").strip() or None
+            if requested_model:
+                allowed = workspace.allowed_models(repo_root)
+                if not allowed:
+                    self._json(
+                        409,
+                        {
+                            "error": (
+                                "workspace ยังไม่ได้ประกาศแผนที่ tier → model "
+                                "— สั่งงานตาม tier ไม่ได้จนกว่าจะอ่านแผนที่นั้นได้"
+                            )
+                        },
+                    )
+                    return
+                if requested_model not in allowed:
+                    self._json(
+                        400,
+                        {
+                            "error": f"unknown model: {requested_model}",
+                            "allowed": sorted(allowed),
+                        },
+                    )
+                    return
+
+            prompt = body.get("prompt")
+            if prompt is not None and not isinstance(prompt, str):
+                self._json(400, {"error": "prompt must be a string"})
+                return
+            prompt = prompt or ""
             try:
                 harness_name, provider = harness.resolve(
                     requested_provider, requested_harness
@@ -1173,8 +1250,17 @@ def make_handler(repo_root: str):
             if not cwd or not os.path.isdir(cwd):
                 cwd = repo_root
 
-            term, _reused = _get_or_spawn(None, cwd, harness_name, provider, child_env)
+            try:
+                term, _reused = _get_or_spawn(
+                    None, cwd, harness_name, provider, child_env, model=requested_model
+                )
+            except ValueError as e:
+                # e.g. model pinning asked of a harness whose flag is unverified
+                self._json(400, {"error": str(e)})
+                return
             discovery.invalidate_cache(repo_root)
+
+            prompt_typed = _type_prompt(term, prompt) if prompt else False
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
             deadline = time.time() + 30
@@ -1192,6 +1278,8 @@ def make_handler(repo_root: str):
                         "session_started": True,
                         "harness": harness_name,
                         "provider": provider,
+                        "model": requested_model,
+                        "prompt_typed": prompt_typed,
                     },
                 )
             else:
@@ -1202,6 +1290,8 @@ def make_handler(repo_root: str):
                         "session_started": False,
                         "harness": harness_name,
                         "provider": provider,
+                        "model": requested_model,
+                        "prompt_typed": prompt_typed,
                         "message": "Session starting; retry to re-check.",
                     },
                 )

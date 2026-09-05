@@ -3,7 +3,10 @@ import {
   fetchWorkspace,
   type WorkspaceResponse,
   type WorkspaceProject,
+  type WorkspaceSlice,
+  type WorkspaceDispatch,
 } from '../lib/api';
+import { DispatchDialog } from './DispatchDialog';
 import './Work.css';
 
 /** Board columns, in reading order. Mirrors control_plane/workspace.py COLUMN_ORDER. */
@@ -18,10 +21,19 @@ const COLUMNS = [
 /** `off` is not a column: days with no work are context, not a queue. */
 const HIDDEN_COLUMN = 'off';
 
+/** Columns whose cards can be handed to a role. `done` is finished; `owner`
+ *  is waiting on a person and dispatching it would be the board overruling
+ *  the 🖐️ mark that put it there. */
+const DISPATCHABLE = new Set(['running', 'next', 'todo']);
+
 export function WorkPage() {
   const [data, setData] = useState<WorkspaceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [picked, setPicked] = useState<{
+    project: WorkspaceProject;
+    slice: WorkspaceSlice;
+  } | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -105,13 +117,35 @@ export function WorkPage() {
       )}
 
       {data?.projects.map((p) => (
-        <ProjectBoard key={p.name} project={p} />
+        <ProjectBoard
+          key={p.name}
+          project={p}
+          dispatch={data.dispatch}
+          onDispatch={(slice) => setPicked({ project: p, slice })}
+        />
       ))}
+
+      {picked && data && (
+        <DispatchDialog
+          project={picked.project}
+          slice={picked.slice}
+          dispatch={data.dispatch}
+          onClose={() => setPicked(null)}
+        />
+      )}
     </div>
   );
 }
 
-function ProjectBoard({ project }: { project: WorkspaceProject }) {
+function ProjectBoard({
+  project,
+  dispatch,
+  onDispatch,
+}: {
+  project: WorkspaceProject;
+  dispatch: WorkspaceDispatch;
+  onDispatch: (slice: WorkspaceSlice) => void;
+}) {
   const missing = (['scope', 'risks', 'hld'] as const).filter(
     (k) => !project.has[k],
   );
@@ -145,6 +179,19 @@ function ProjectBoard({ project }: { project: WorkspaceProject }) {
                   </span>
                   <span className="title">{s.title}</span>
                   {s.note && <span className="note">{s.note}</span>}
+                  {DISPATCHABLE.has(col.key) && (
+                    <button
+                      className="dispatch"
+                      onClick={() => onDispatch(s)}
+                      title={
+                        dispatch.present
+                          ? 'เลือก role แล้วเปิด session ที่ปักหมุด tier ไว้'
+                          : 'อ่านแผนที่ role → model ไม่ได้ — กดเพื่อดูเหตุผล'
+                      }
+                    >
+                      สั่งงาน
+                    </button>
+                  )}
                 </article>
               ))}
               {items.length === 0 && <div className="col-empty">—</div>}

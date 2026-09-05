@@ -88,11 +88,29 @@ def workspace_overview(
         "projects": projects,
         "totals": _totals(projects),
         "gaps": _scan_gaps(root),
+        "dispatch": _scan_dispatch(root),
     }
 
     if head:
         _CACHE[str(root)] = (head, payload)
     return payload
+
+
+def allowed_models(repo_root: str) -> set[str]:
+    """Model ids this workspace has declared a tier for.
+
+    The spawn path validates against this rather than a list held in switchboard:
+    the lineup changes when the workspace says it changes, and an id that is not
+    in the declared map is a typo or a stale client, never a silent pass-through.
+    """
+    try:
+        payload = workspace_overview(repo_root)
+    except ValueError:
+        return set()
+    dispatch = payload.get("dispatch") or {}
+    if not dispatch.get("present"):
+        return set()
+    return set(dispatch.get("tiers", {}).values())
 
 
 def invalidate_cache(repo_root: str | None = None) -> None:
@@ -139,11 +157,14 @@ def _scan_projects(root: Path) -> list[dict]:
         if not slices_file.is_file():
             continue
         slices = _parse_slices(slices_file)
+        owns = _frontmatter(slices_file)
         found.append(
             {
                 "name": child.name,
                 "slices": [asdict(s) for s in slices],
                 "columns": _bucket(slices),
+                "client": owns.get("client", ""),
+                "team": owns.get("team", ""),
                 "has": {
                     "scope": (child / "scope.md").is_file(),
                     "risks": (child / "risks.md").is_file(),
@@ -152,6 +173,32 @@ def _scan_projects(root: Path) -> list[dict]:
             }
         )
     return found
+
+
+def _frontmatter(path: Path) -> dict[str, str]:
+    """The `key: value` lines of a leading `---` block.
+
+    Hand-rolled rather than PyYAML: HLD v2 AD1 keeps this server zero-dependency,
+    and the two keys read here (`client`, `team`) are plain scalars. Anything
+    more structured is deliberately not supported — a parser that half-implements
+    YAML is worse than one that says what it reads.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---"):
+        return {}
+
+    out: dict[str, str] = {}
+    for line in text.splitlines()[1:]:
+        if line.strip() == "---":
+            break
+        key, sep, value = line.partition(":")
+        if not sep or not key.strip() or key.startswith((" ", "\t", "-")):
+            continue
+        out[key.strip()] = value.strip().strip("\"'")
+    return out
 
 
 def _parse_slices(path: Path) -> list[Slice]:
@@ -270,6 +317,101 @@ def _scan_gaps(root: Path) -> dict:
     for state in seen.values():
         counts[state] += 1
     return {"present": True, "total": len(seen), **counts}
+
+
+# The workspace declares its tier lineup in one prose sentence, on purpose:
+# "light = `claude-haiku-4-5`, standard = `claude-sonnet-5`, heavy = `claude-opus-5`".
+_TIER_ASSIGN = re.compile(r"\b(light|standard|heavy)\s*=\s*`([A-Za-z0-9._-]+)`")
+
+_ROLE_HEADING = "โมเดลต่อ role"
+_ROLE_TIERS = ("heavy", "standard", "light")
+
+
+def _scan_dispatch(root: Path) -> dict:
+    """Which role runs on which model — read from the workspace, never held here.
+
+    Two files, each the declared single source of its own half:
+      - docs/sops/sop-agent-orchestration.md  → tier name → model id
+      - team-os/people/roles.md               → role → default tier
+
+    Deliberately *not* mirrored into this repo. ADR-0029 §SD4 took the same line
+    for the gap register: a second copy of a maintained table drifts from it and
+    then argues with it. The cost is that a rewording upstream turns dispatch
+    off — which is the safe direction, because roles.md states plainly that
+    "ไม่ส่ง model ≠ ค่า default ที่ปลอดภัย": a missing model is inherited from
+    whatever launched the server, so guessing one is worse than refusing.
+    """
+    sop = root / "docs" / "sops" / "sop-agent-orchestration.md"
+    roles_file = root / "team-os" / "people" / "roles.md"
+
+    tiers = _parse_tier_models(sop)
+    if not tiers:
+        return {
+            "present": False,
+            "reason": f"ไม่พบแผนที่ tier → model ใน {sop.name}",
+        }
+
+    roles = _parse_role_tiers(roles_file, tiers)
+    if not roles:
+        return {
+            "present": False,
+            "reason": f"ไม่พบตาราง role → tier ใน {roles_file.name}",
+        }
+
+    return {
+        "present": True,
+        "tiers": tiers,
+        "roles": roles,
+        "source": {
+            "tiers": "docs/sops/sop-agent-orchestration.md",
+            "roles": "team-os/people/roles.md",
+        },
+    }
+
+
+def _parse_tier_models(path: Path) -> dict[str, str]:
+    """tier name → model id, from the canonical sentence in the SOP."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    found = {tier: model for tier, model in _TIER_ASSIGN.findall(text)}
+    # All three or none: a partial lineup would let a role resolve while its
+    # neighbour silently does not, which is harder to notice than a clean off.
+    return found if all(t in found for t in _ROLE_TIERS) else {}
+
+
+def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
+    """role → default tier, from the table under roles.md § โมเดลต่อ role.
+
+    Anchored on that heading rather than "the first table": roles.md opens with
+    a routing table that has nothing to do with models.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    out: list[dict] = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if in_section:
+                break  # the section ended; later tables are a different axis
+            in_section = _ROLE_HEADING in stripped
+            continue
+        if not in_section or not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        role = _strip_md(cells[0])
+        tier = _strip_md(cells[1]).lower()
+        if tier not in tiers or not role:
+            continue  # header row, separator row, or the "ขึ้น heavy เมื่อ" prose
+        out.append({"role": role, "tier": tier, "model": tiers[tier]})
+    return out
 
 
 def _strip_md(cell: str) -> str:
