@@ -74,6 +74,7 @@ def build_command(
     cwd: str,
     provider: str,
     model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> list[str]:
     """Build the interactive PTY command for a harness session.
 
@@ -81,6 +82,10 @@ def build_command(
     rather than an env var because that is the only lever that actually holds:
     a session with no `--model` inherits whatever launched the server, and a
     citation in the prompt changes nothing at all.
+
+    `effort` rides the same path (ADR-0032) — the per-role thinking depth
+    (`low`/`medium`/`high`/`xhigh`/`max`) that today only lives in
+    `roles.md § โมเดลต่อ role` with nothing carrying it to the process.
     """
     if harness_name == "claude":
         if provider not in ("claude", "deepseek", "ollama"):
@@ -88,6 +93,8 @@ def build_command(
         cmd = [os.environ.get("ORCH_CLAUDE_BIN", config.CLAUDE_BIN)]
         if model:
             cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
         if session_id:
             cmd += ["--resume", session_id]
         return cmd
@@ -96,6 +103,10 @@ def build_command(
         # Guessing the flag for another CLI would fail at exec, inside a PTY,
         # where the error reaches the user as a blank terminal.
         raise ValueError(f"model pinning is not supported for harness: {harness_name}")
+    if effort:
+        # Same reasoning as model pinning above (ADR-0032 §SD4): neither CLI's
+        # effort flag, if any, has been verified — refuse rather than guess.
+        raise ValueError(f"effort pinning is not supported for harness: {harness_name}")
     if harness_name == "codex":
         if provider != "openai":
             raise ValueError(f"unknown Codex provider: {provider}")

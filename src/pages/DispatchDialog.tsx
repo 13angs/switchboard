@@ -49,6 +49,7 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
     try {
       const res = await startSession('claude', 'claude', undefined, {
         model: role.model,
+        effort: role.effort ?? undefined,
         prompt: text,
       });
       // The session may not have an id yet — it gets one at the first prompt,
@@ -112,6 +113,12 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
             {role && (
               <p className="dlg-model">
                 รันด้วย <code>{role.model}</code>
+                {role.effort && (
+                  <>
+                    {' '}
+                    · effort <code>{role.effort}</code>
+                  </>
+                )}
                 <span className="src">
                   · แผนที่มาจาก {dispatch.source.roles} +{' '}
                   {dispatch.source.tiers}
