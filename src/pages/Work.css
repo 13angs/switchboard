@@ -484,3 +484,101 @@
   opacity: 0.55;
   cursor: default;
 }
+
+/* ── Daily calendar (slices.md S9) ── */
+
+.calendar {
+  margin: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+.calendar-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.calendar-head h2 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+.calendar-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+.calendar-loading,
+.calendar-error {
+  margin: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.calendar-error {
+  color: var(--blocked);
+  background: var(--blocked-soft);
+}
+.calendar-scale {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 4px 92px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.cal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.cal-row.cal-today .cal-date {
+  color: var(--accent);
+  font-weight: 600;
+}
+.cal-date {
+  flex: 0 0 84px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.cal-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.cal-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--faint);
+}
+.cal-block {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 2px;
+  cursor: default;
+}
+.cal-work {
+  background: var(--accent);
+}
+.cal-personal {
+  background: var(--ok);
+}
+.cal-learning {
+  background: var(--awaiting);
+}
+.cal-other {
+  background: var(--idle);
+}

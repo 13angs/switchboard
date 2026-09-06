@@ -7,6 +7,7 @@ import {
   type WorkspaceDispatch,
 } from '../lib/api';
 import { DispatchDialog } from './DispatchDialog';
+import { DayCalendar } from './DayCalendar';
 import './Work.css';
 
 /** Board columns, in reading order. Mirrors control_plane/workspace.py COLUMN_ORDER. */
@@ -115,6 +116,8 @@ export function WorkPage() {
           </p>
         </div>
       )}
+
+      <DayCalendar />
 
       {data?.projects.map((p) => (
         <ProjectBoard

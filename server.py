@@ -21,6 +21,7 @@ Endpoints:
     GET  /health                      -> {ok: true}
     GET  /work                        -> work board page (work.html) (ADR-0029)
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
+    GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[]}]} (slices.md S9)
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
@@ -76,6 +77,7 @@ from control_plane import (
     claude_store,
     config,
     codex_store,
+    daily_calendar,
     discovery,
     harness,
     lock,
@@ -928,6 +930,8 @@ def make_handler(repo_root: str):
                     self._json(404, {"error": "not found"})
             elif path == "/workspace":
                 self._workspace(repo_root)
+            elif path == "/calendar":
+                self._calendar(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -1073,6 +1077,45 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": str(e)})
             except Exception as e:
                 self._json(500, {"error": str(e)})
+
+        def _calendar(self, repo_root: str):
+            """GET /calendar — daily-schedule bars for the Work board (S9).
+
+            `?date=YYYY-MM-DD` centers the window (default: today, Asia/Bangkok
+            — the owner's day, not the container's UTC); `?before=`/`?after=`
+            widen it (default 2/2, so 5 bars). Not HEAD-cached like /workspace:
+            "today" moves with the clock, not with a commit.
+            """
+            qs = parse_qs(urlparse(self.path).query)
+            date_param = (qs.get("date") or [""])[0]
+            if date_param:
+                try:
+                    center = datetime.strptime(date_param, "%Y-%m-%d").date()
+                except ValueError:
+                    self._json(400, {"error": "date must be YYYY-MM-DD"})
+                    return
+            else:
+                center = daily_calendar.today_bangkok()
+
+            def _int_param(name: str, default: int) -> Optional[int]:
+                raw = (qs.get(name) or [""])[0]
+                if not raw:
+                    return default
+                try:
+                    return int(raw)
+                except ValueError:
+                    return None
+
+            before = _int_param("before", 2)
+            after = _int_param("after", 2)
+            if before is None or after is None or before < 0 or after < 0:
+                self._json(400, {"error": "before/after must be non-negative integers"})
+                return
+
+            days = daily_calendar.window_schedule(
+                Path(repo_root), center, before=before, after=after
+            )
+            self._json(200, {"center": center.isoformat(), "days": days})
 
         def _timeline(self, session_id: str, repo_root: str):
             """ADR-0017 §SD1 — tool calls for one session, on demand.
