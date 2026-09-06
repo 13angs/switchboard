@@ -23,12 +23,14 @@ interface Props {
  */
 export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
   const roles = dispatch.present ? dispatch.roles : [];
-  // The card opens on the role its own project belongs to (project.default_role,
-  // derived from slices.md `team:`), not the first row of a table that has
-  // nothing to do with this task — that fell through to CTO/heavy on every
-  // card (ADR-0033, closes risks.md S-09). Unrecognised `team:` values still
-  // fall back to the first role, same as before this fix.
-  const defaultRole = roles.find((r) => r.role === project.default_role);
+  // The card opens on the role its own row belongs to. Most rows carry no
+  // override and get the project's own role (project.default_role, derived
+  // from slices.md `team:`, ADR-0033, closes risks.md S-09); a row with its
+  // own `role` column cell (ADR-0035, closes S14) opens on that role instead
+  // — e.g. an architecture-decision row in an otherwise all-`developer` file.
+  // Unrecognised values in either field still fall back to the first role,
+  // same as before both fixes.
+  const defaultRole = roles.find((r) => r.role === (slice.role ?? project.default_role));
   const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
   const role: DispatchRole | undefined = roles.find((r) => r.role === roleName);
 
