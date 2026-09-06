@@ -90,6 +90,11 @@ function replaceSessionParams(sessionId: string, harness: string, provider: stri
   url.searchParams.set('session_id', sessionId);
   url.searchParams.set('harness', harness);
   if (provider) url.searchParams.set('provider', provider);
+  // The attach_key was only ever a stand-in for the session_id we now have
+  // (ADR-0028 §SD1 rejects the key surviving in a persisted URL) — drop it so
+  // a reload or bookmark of this page resolves by session_id, not a key that
+  // dies with this PTY.
+  url.searchParams.delete('attach_key');
   history.replaceState(null, '', url.toString());
 }
 
@@ -127,6 +132,12 @@ function flattenContent(blocks: RichContentBlock[] | undefined): string {
 export function AgentPage() {
   const qs = new URLSearchParams(location.search);
   const initialSessionId = qs.get('session_id');
+  // The dispatch flow (DispatchDialog) navigates here with an attach_key when
+  // it has no session_id yet — the server issued the key at spawn, before the
+  // PTY had prompted (ADR-0028 §SD1). Without seeding it here, this page's
+  // first WS connect carries no identity at all and spawns a second PTY
+  // instead of attaching to the one dispatch already prompted (risks.md S-11).
+  const initialAttachKey = initialSessionId ? null : qs.get('attach_key');
   const harness = qs.get('harness') ?? 'claude';
   const provider = qs.get('provider');
   const label = qs.get('label');
@@ -171,7 +182,7 @@ export function AgentPage() {
   /** Server-issued handle for the PTY this tab is attached to. A ref, not
    *  state: it must be readable at reconnect time without re-rendering, and
    *  arriving it must not itself tear down a healthy socket (ADR-0028 §SD1). */
-  const attachKeyRef = useRef<string | null>(null);
+  const attachKeyRef = useRef<string | null>(initialAttachKey);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   /** `send` is produced by the hook below, but onOpen is an argument to it. */
   const wsSendRef = useRef<((data: string) => void) | null>(null);
@@ -323,7 +334,7 @@ export function AgentPage() {
   // change this string and tear down a perfectly healthy socket. Where to
   // reconnect *to* is answered at connect time by `resolveUrl` instead — a
   // session switch is a full page navigation, so nothing else needs the churn.
-  const wsUrl = buildWsUrl(initialSessionId, harness, provider, null);
+  const wsUrl = buildWsUrl(initialSessionId, harness, provider, initialAttachKey);
   const resolveWsUrl = useCallback(
     () => buildWsUrl(sessionIdRef.current, harness, provider, attachKeyRef.current),
     [harness, provider]

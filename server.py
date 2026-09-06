@@ -1321,6 +1321,7 @@ def make_handler(repo_root: str):
                     200,
                     {
                         "session_id": sid,
+                        "attach_key": term.attach_key,
                         "session_started": True,
                         "harness": harness_name,
                         "provider": provider,
@@ -1330,10 +1331,17 @@ def make_handler(repo_root: str):
                     },
                 )
             else:
+                # ADR-0028 §SD1: the PTY already has an attach_key (assigned at
+                # spawn, before session_id exists) — this is the id-less window
+                # the ADR describes. Without it in this response the caller has
+                # no identity to navigate with, and a second surface (the
+                # terminal WS) spawns a duplicate PTY on first connect instead
+                # of attaching to this one (risks.md S-11).
                 self._json(
                     202,
                     {
                         "session_id": None,
+                        "attach_key": term.attach_key,
                         "session_started": False,
                         "harness": harness_name,
                         "provider": provider,

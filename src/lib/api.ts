@@ -115,6 +115,11 @@ export interface StartSessionOptions {
 
 export interface StartSessionResponse {
   session_id: string | null;
+  /** Server-issued identity for the PTY, present even before session_id is
+   *  known (ADR-0028 §SD1). The caller must carry it to wherever it navigates
+   *  next, or a fresh connect there spawns a second PTY instead of attaching
+   *  to this one. */
+  attach_key: string | null;
   session_started: boolean;
   harness?: string;
   provider?: string;
