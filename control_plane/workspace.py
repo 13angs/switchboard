@@ -80,6 +80,8 @@ def workspace_overview(
             return cached[1]
 
     projects = _scan_projects(root)
+    dispatch = _scan_dispatch(root)
+    _attach_default_roles(root, projects, dispatch)
     payload = {
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "repo": str(root),
@@ -88,7 +90,7 @@ def workspace_overview(
         "projects": projects,
         "totals": _totals(projects),
         "gaps": _scan_gaps(root),
-        "dispatch": _scan_dispatch(root),
+        "dispatch": dispatch,
     }
 
     if head:
@@ -412,6 +414,100 @@ def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
             continue  # header row, separator row, or the "ขึ้น heavy เมื่อ" prose
         out.append({"role": role, "tier": tier, "model": tiers[tier]})
     return out
+
+
+_OWNERSHIP_HEADING = "แกนความเป็นเจ้าของ"
+
+# `dev` is read by both `senior-developer` and `developer` in the ownership
+# table (roles.md § แกนความเป็นเจ้าของ) — the escalation is a judgment call the
+# row itself does not carry, so an unqualified `team: dev` lands on the role
+# that does routine in-slice work, not the one that owns system-wide calls.
+_DISCIPLINE_TIE_BREAK = {"dev": "developer"}
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[\s_]+", "-", text.strip().lower())
+
+
+def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
+    """role slug → disciplines it owns, from roles.md § แกนความเป็นเจ้าของ.
+
+    Same anchored-on-heading approach as `_parse_role_tiers`: the table's
+    prose wording is free to change, but its position under this heading is
+    the contract. Read once per call rather than cached alongside the tier
+    table — this table is small and dispatch already re-reads roles.md.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    out: dict[str, list[str]] = {}
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if in_section:
+                break  # section ended; the appendix table is a different axis
+            in_section = _OWNERSHIP_HEADING in stripped
+            continue
+        if not in_section or not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        role = _slug(_strip_md(cells[0]))
+        disciplines_cell = _strip_md(cells[2])
+        if not role or set(role) <= set("-: "):
+            continue  # separator row
+        if role in ("role", "แกนความเป็นเจ้าของ"):
+            continue  # header row
+        disciplines = [
+            _slug(d) for d in disciplines_cell.split("·") if _slug(d) and _slug(d) != "—"
+        ]
+        out[role] = disciplines
+    return out
+
+
+def _default_role_for_team(
+    team: str, role_disciplines: dict[str, list[str]], roles: list[dict]
+) -> Optional[str]:
+    """Which of `dispatch.roles` a project's `team:` frontmatter points to.
+
+    `team:` is written freely across projects — sometimes a discipline
+    (`dev`, `forge`), sometimes a role name directly (`product-owner`).
+    Both are tried; an unrecognised value resolves to nothing rather than a
+    guess, so the caller falls back to its own default (ADR-0033 §SD1).
+    """
+    if not team:
+        return None
+    known = {_slug(r["role"]): r["role"] for r in roles}
+    slug = _slug(team)
+    if slug in known:
+        return known[slug]
+    if slug in _DISCIPLINE_TIE_BREAK:
+        return known.get(_DISCIPLINE_TIE_BREAK[slug])
+    for role_slug, disciplines in role_disciplines.items():
+        if slug in disciplines:
+            return known.get(role_slug)
+    return None
+
+
+def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> None:
+    """Sets each project's `default_role` — the dispatch box should open on
+    the role the project's own work belongs to, not the first row of a table
+    it has nothing to do with (ADR-0033, closes risks.md S-09)."""
+    if not dispatch.get("present"):
+        for p in projects:
+            p["default_role"] = None
+        return
+    role_disciplines = _parse_role_disciplines(
+        root / "team-os" / "people" / "roles.md"
+    )
+    for p in projects:
+        p["default_role"] = _default_role_for_team(
+            p.get("team", ""), role_disciplines, dispatch["roles"]
+        )
 
 
 def _strip_md(cell: str) -> str:

@@ -49,6 +49,28 @@ ROLES = """# Roles
 | **heavy** | `arch` · `forge` |
 """
 
+ROLES_WITH_OWNERSHIP = """# Roles
+
+## โมเดลต่อ role — tier ที่แต่ละบทบาททำงานด้วย
+
+| Role | default | ขึ้น **heavy** เมื่อ | ลง **light** เมื่อ |
+| --- | :-: | --- | --- |
+| **CTO** | **heavy** | — | — |
+| **Senior Developer** | standard | — | — |
+| **Developer** | standard | — | งานกลไก |
+| **Product Owner** | standard | — | — |
+| **QA** | standard | — | รันเคสที่ระบุไฟล์ |
+
+## แกนความเป็นเจ้าของ — role → office · discipline · ที่บันทึก
+
+| role | office | เปิด discipline leaf ใน `team/` เพื่ออ่านวิธีทำงาน | บันทึกผลลงที่ |
+| --- | :-: | --- | --- |
+| `cto` | `build` | `arch` · `security` | `meta/adr-*.md` |
+| `senior-developer` | `build` | `dev` · `devex` | ADR |
+| `developer` | `build` | `dev` | commit body |
+| `product-owner` | `business` | `forge` · `client` | day file |
+"""
+
 
 def _repo(tmp_path: Path, *, sop: str | None = SOP, roles: str | None = ROLES) -> Path:
     proj = tmp_path / "projects" / "demo"
@@ -135,6 +157,78 @@ def test_project_carries_its_client_and_team(tmp_path):
     out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
     assert out["projects"][0]["client"] == "winona"
     assert out["projects"][0]["team"] == "forge"
+
+
+# ── the dispatch box opens on the project's own role, not roles[0] (ADR-0033) ──
+
+
+def _repo_with_team(tmp_path: Path, team: str) -> Path:
+    proj = tmp_path / "projects" / "demo"
+    proj.mkdir(parents=True)
+    (proj / "slices.md").write_text(
+        f"---\nclient: winona\nteam: {team}\n---\n\n"
+        "| # | ชิ้น | วัน | สถานะ | ผล |\n"
+        "| :-: | --- | --- | :-: | --- |\n"
+        "| **M0** | ทำของ | จ. | ⬜ | ได้ของ |\n",
+        encoding="utf-8",
+    )
+    sops = tmp_path / "docs" / "sops"
+    sops.mkdir(parents=True)
+    (sops / "sop-agent-orchestration.md").write_text(SOP, encoding="utf-8")
+    people = tmp_path / "team-os" / "people"
+    people.mkdir(parents=True)
+    (people / "roles.md").write_text(ROLES_WITH_OWNERSHIP, encoding="utf-8")
+    return tmp_path
+
+
+def test_default_role_resolves_a_discipline_to_its_owning_role(tmp_path):
+    """`team: forge` is a discipline, not a role — it must resolve through the
+    ownership table rather than be compared to role names directly."""
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "forge")), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] == "Product Owner"
+
+
+def test_default_role_reads_a_role_name_written_directly(tmp_path):
+    """`team:` sometimes names a role outright (partner-offer's `team: product-owner`)."""
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "product-owner")), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] == "Product Owner"
+
+
+def test_ambiguous_dev_discipline_ties_to_developer_not_senior(tmp_path):
+    """`dev` is opened by both `senior-developer` and `developer` in the
+    ownership table — the routine-work role wins by default (S-09's fix)."""
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "dev")), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] == "Developer"
+
+
+def test_devex_is_unambiguous_and_goes_to_senior_developer(tmp_path):
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "devex")), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] == "Senior Developer"
+
+
+def test_unrecognised_team_falls_back_to_no_default(tmp_path):
+    """An unmatched `team:` resolves to nothing rather than a guess — the
+    client keeps its own fallback (first role), same as before this fix."""
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "nonexistent-team")), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] is None
+
+
+def test_default_role_is_none_when_dispatch_is_not_present(tmp_path):
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, roles=None)), use_cache=False
+    )
+    assert out["projects"][0]["default_role"] is None
+
 
 
 # ── the flag actually reaches argv ──────────────────────────────────────────

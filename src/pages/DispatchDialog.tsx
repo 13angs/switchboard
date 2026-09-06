@@ -23,7 +23,13 @@ interface Props {
  */
 export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
   const roles = dispatch.present ? dispatch.roles : [];
-  const [roleName, setRoleName] = useState(roles[0]?.role ?? '');
+  // The card opens on the role its own project belongs to (project.default_role,
+  // derived from slices.md `team:`), not the first row of a table that has
+  // nothing to do with this task — that fell through to CTO/heavy on every
+  // card (ADR-0033, closes risks.md S-09). Unrecognised `team:` values still
+  // fall back to the first role, same as before this fix.
+  const defaultRole = roles.find((r) => r.role === project.default_role);
+  const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
   const role: DispatchRole | undefined = roles.find((r) => r.role === roleName);
 
   const composed = useMemo(

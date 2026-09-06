@@ -30,6 +30,7 @@ const project: WorkspaceProject = {
   columns: {},
   client: "winona",
   team: "forge",
+  default_role: "Product Owner",
   has: { scope: true, risks: true, hld: false },
 };
 
