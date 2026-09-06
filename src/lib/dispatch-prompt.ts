@@ -16,6 +16,9 @@ export interface DispatchRole {
   role: string;
   tier: string;
   model: string;
+  /** ADR-0032 — omitted (null) when roles.md carries no effort column, or
+   *  the tier is `light`, which rejects `--effort` outright. */
+  effort: string | null;
 }
 
 /** Files every dispatched role reads before starting — the team-os spine. */

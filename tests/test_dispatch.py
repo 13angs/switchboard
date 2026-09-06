@@ -71,6 +71,18 @@ ROLES_WITH_OWNERSHIP = """# Roles
 | `product-owner` | `business` | `forge` · `client` | day file |
 """
 
+ROLES_WITH_EFFORT = """# Roles
+
+## โมเดลต่อ role — tier ที่แต่ละบทบาททำงานด้วย
+
+| Role | default | effort | ขึ้น **heavy** เมื่อ |
+| --- | :-: | :-: | --- |
+| **CTO** | **heavy** | `xhigh` | — |
+| **Developer** | standard | `medium` | — |
+| **QA** | standard | garbage | — |
+| **Support** | light | `medium` | — |
+"""
+
 
 def _repo(tmp_path: Path, *, sop: str | None = SOP, roles: str | None = ROLES) -> Path:
     proj = tmp_path / "projects" / "demo"
@@ -113,9 +125,19 @@ def test_reads_tier_map_and_roles_from_the_workspace(tmp_path):
         "heavy": "claude-opus-5",
     }
     assert d["roles"] == [
-        {"role": "CTO", "tier": "heavy", "model": "claude-opus-5"},
-        {"role": "Developer", "tier": "standard", "model": "claude-sonnet-5"},
-        {"role": "QA", "tier": "standard", "model": "claude-sonnet-5"},
+        {"role": "CTO", "tier": "heavy", "model": "claude-opus-5", "effort": None},
+        {
+            "role": "Developer",
+            "tier": "standard",
+            "model": "claude-sonnet-5",
+            "effort": None,
+        },
+        {
+            "role": "QA",
+            "tier": "standard",
+            "model": "claude-sonnet-5",
+            "effort": None,
+        },
     ]
 
 
@@ -157,6 +179,85 @@ def test_project_carries_its_client_and_team(tmp_path):
     out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
     assert out["projects"][0]["client"] == "winona"
     assert out["projects"][0]["team"] == "forge"
+
+
+# ── effort rides with the model (ADR-0032, S12) ─────────────────────────────
+
+
+def test_effort_column_is_read_positionally(tmp_path):
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, roles=ROLES_WITH_EFFORT)), use_cache=False
+    )
+    roles = {r["role"]: r["effort"] for r in out["dispatch"]["roles"]}
+    assert roles["CTO"] == "xhigh"
+    assert roles["Developer"] == "medium"
+
+
+def test_unknown_effort_value_is_dropped_not_guessed(tmp_path):
+    """`garbage` in the effort column must not become a value the client can
+    forward to the CLI — silence, not a guess (ADR-0032 §SD2)."""
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, roles=ROLES_WITH_EFFORT)), use_cache=False
+    )
+    roles = {r["role"]: r["effort"] for r in out["dispatch"]["roles"]}
+    assert roles["QA"] is None
+
+
+def test_light_tier_never_carries_effort(tmp_path):
+    """Haiku rejects `--effort` outright (§SD6) — even a valid-looking cell
+    next to a `light` row must not survive."""
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, roles=ROLES_WITH_EFFORT)), use_cache=False
+    )
+    roles = {r["role"]: r["effort"] for r in out["dispatch"]["roles"]}
+    assert roles["Support"] is None
+
+
+def test_table_without_the_effort_column_still_dispatches(tmp_path):
+    """§SD5: an older 2/3-column roles.md must not break — it just carries no
+    effort, same as before this ADR."""
+    out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
+    assert all(r["effort"] is None for r in out["dispatch"]["roles"])
+
+
+def test_model_tier_finds_the_declared_tier(tmp_path):
+    root = str(_repo(tmp_path))
+    assert workspace.model_tier(root, "claude-opus-5") == "heavy"
+    assert workspace.model_tier(root, "claude-haiku-4-5") == "light"
+    assert workspace.model_tier(root, "not-a-real-model") is None
+
+
+def test_effort_reaches_the_claude_command_line(tmp_path):
+    cmd = harness.build_command(
+        "claude", None, str(tmp_path), "claude", "claude-opus-5", "xhigh"
+    )
+    assert cmd[cmd.index("--effort") + 1] == "xhigh"
+
+
+def test_no_effort_means_no_flag(tmp_path):
+    cmd = harness.build_command("claude", None, str(tmp_path), "claude")
+    assert "--effort" not in cmd
+
+
+def test_effort_precedes_resume_so_both_survive(tmp_path):
+    cmd = harness.build_command(
+        "claude", "sid-1", str(tmp_path), "claude", "claude-sonnet-5", "medium"
+    )
+    assert cmd[cmd.index("--effort") + 1] == "medium"
+    assert cmd[cmd.index("--resume") + 1] == "sid-1"
+
+
+def test_unverified_harness_refuses_effort_rather_than_dropping_it(tmp_path):
+    for name in ("codex", "agy"):
+        with pytest.raises(ValueError, match="effort pinning"):
+            harness.build_command(
+                name,
+                None,
+                str(tmp_path),
+                "openai" if name == "codex" else "google",
+                None,
+                "high",
+            )
 
 
 # ── the dispatch box opens on the project's own role, not roles[0] (ADR-0033) ──
@@ -330,6 +431,25 @@ def test_resume_never_re_pins_the_model(srv, monkeypatch, tmp_path):
     seen.clear()
     srv._get_or_spawn("existing-session", str(tmp_path), model="claude-opus-5")
     assert seen["model"] is None, "a resume must not re-pin the tier"
+
+
+def test_resume_never_re_pins_effort(srv, monkeypatch, tmp_path):
+    """Same rule as the model, for the same reason (ADR-0032 §SD3)."""
+    seen = {}
+
+    def fake_spawn(harness_name, **kwargs):
+        seen.update(kwargs)
+        return _FakeTerm()
+
+    monkeypatch.setattr(srv.terminal, "spawn_harness", fake_spawn)
+    monkeypatch.setattr(srv.lock, "external_holder", lambda *a, **kw: None)
+
+    srv._get_or_spawn(None, str(tmp_path), effort="high")
+    assert seen["effort"] == "high", "a fresh spawn must carry the effort"
+
+    seen.clear()
+    srv._get_or_spawn("existing-session", str(tmp_path), effort="high")
+    assert seen["effort"] is None, "a resume must not re-pin the effort"
 
 
 def test_prompt_is_typed_without_the_submit_key(srv):

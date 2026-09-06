@@ -106,6 +106,9 @@ export interface StartSessionOptions {
   /** Pins the tier (ADR-0030). Omitting it inherits the model of whatever
    *  launched the server — not a safer default, just an unstated one. */
   model?: string;
+  /** Pins the thinking depth (ADR-0032) — `low`/`medium`/`high`/`xhigh`/`max`.
+   *  Fresh spawns only, same rule as `model`. */
+  effort?: string;
   /** Typed into the PTY and left unsent; a person presses Enter. */
   prompt?: string;
 }
@@ -116,6 +119,7 @@ export interface StartSessionResponse {
   harness?: string;
   provider?: string;
   model?: string | null;
+  effort?: string | null;
   prompt_typed?: boolean;
   message?: string;
 }
@@ -206,7 +210,7 @@ export type WorkspaceDispatch =
   | {
       present: true;
       tiers: Record<string, string>;
-      roles: { role: string; tier: string; model: string }[];
+      roles: { role: string; tier: string; model: string; effort: string | null }[];
       source: { tiers: string; roles: string };
     };
 

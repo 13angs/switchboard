@@ -38,6 +38,7 @@ const role: DispatchRole = {
   role: "Developer",
   tier: "standard",
   model: "claude-sonnet-5",
+  effort: "medium",
 };
 
 // ── the role and its tier are stated, not implied ──

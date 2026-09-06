@@ -272,6 +272,7 @@ def spawn_harness(
     cols: int = 80,
     provider: str = "claude",
     model: Optional[str] = None,
+    effort: Optional[str] = None,
     env: Optional[dict] = None,
     output_observer: Optional[Callable[[PtyTerminal, bytes], None]] = None,
     input_observer: Optional[Callable[[PtyTerminal, bytes], None]] = None,
@@ -286,11 +287,13 @@ def spawn_harness(
         rows, cols: Initial terminal dimensions.
         model: Pin the session's model (ADR-0030). Fresh spawns only — a resume
             re-enters a session that already has one.
+        effort: Pin the session's thinking effort (ADR-0032). Same fresh-spawn-only
+            rule as `model`.
 
     The caller must call `start_reader()` (after registering) to begin I/O.
     """
     cwd_arg = cwd or os.getcwd()
-    cmd = harness.build_command(harness_name, session_id, cwd_arg, provider, model)
+    cmd = harness.build_command(harness_name, session_id, cwd_arg, provider, model, effort)
 
     pid, fd = pty.fork()
     if pid == 0:

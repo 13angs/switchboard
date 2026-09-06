@@ -115,6 +115,26 @@ def allowed_models(repo_root: str) -> set[str]:
     return set(dispatch.get("tiers", {}).values())
 
 
+def model_tier(repo_root: str, model: str) -> Optional[str]:
+    """Which tier name a model id belongs to, or None when it isn't declared.
+
+    The spawn path uses this to enforce ADR-0032 §SD6: `--effort` must never
+    reach a `light`-tier session, so it needs the model → tier direction too,
+    not just the tier → model map `allowed_models()` already exposes.
+    """
+    try:
+        payload = workspace_overview(repo_root)
+    except ValueError:
+        return None
+    dispatch = payload.get("dispatch") or {}
+    if not dispatch.get("present"):
+        return None
+    for tier, m in dispatch.get("tiers", {}).items():
+        if m == model:
+            return tier
+    return None
+
+
 def invalidate_cache(repo_root: str | None = None) -> None:
     """Drop cached payloads. Mirrors discovery.invalidate_cache()."""
     if repo_root is None:
@@ -383,8 +403,18 @@ def _parse_tier_models(path: Path) -> dict[str, str]:
     return found if all(t in found for t in _ROLE_TIERS) else {}
 
 
+#  effort values the CLI itself accepts (ADR-0032 §SD2) — anything else is a
+#  typo in roles.md, not a value to guess a mapping for.
+VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+# The tier whose model rejects `--effort` outright (ADR-0032 §SD6) — Haiku
+# still uses `budget_tokens`, so a role parked there must never carry effort.
+_NO_EFFORT_TIER = "light"
+
+
 def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
-    """role → default tier, from the table under roles.md § โมเดลต่อ role.
+    """role → default tier (+ effort, when the column is present), from the
+    table under roles.md § โมเดลต่อ role.
 
     Anchored on that heading rather than "the first table": roles.md opens with
     a routing table that has nothing to do with models.
@@ -412,7 +442,20 @@ def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
         tier = _strip_md(cells[1]).lower()
         if tier not in tiers or not role:
             continue  # header row, separator row, or the "ขึ้น heavy เมื่อ" prose
-        out.append({"role": role, "tier": tier, "model": tiers[tier]})
+
+        # ADR-0032 §SD1: positional, column 3 — same rationale as the tier
+        # column itself (§SD5: an older 2-column table must keep dispatching
+        # on model alone, so a missing/unknown cell means "no effort", not a
+        # parse failure). §SD6: light never carries effort, full stop.
+        effort: Optional[str] = None
+        if tier != _NO_EFFORT_TIER and len(cells) > 2:
+            candidate = _strip_md(cells[2]).lower()
+            if candidate in VALID_EFFORTS:
+                effort = candidate
+
+        out.append(
+            {"role": role, "tier": tier, "model": tiers[tier], "effort": effort}
+        )
     return out
 
 

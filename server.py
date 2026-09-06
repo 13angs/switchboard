@@ -26,8 +26,9 @@ Endpoints:
                                          args_summary, args, ts, duration_ms,
                                          duration_state, result_summary, result_ts}]}
     POST /session/start               -> spawn a fresh harness PTY
-                                         body {harness?, provider?, model?, prompt?}
-                                         model pins the tier (ADR-0030); prompt is
+                                         body {harness?, provider?, model?, effort?, prompt?}
+                                         model pins the tier (ADR-0030); effort pins
+                                         thinking depth (ADR-0032); prompt is
                                          typed into the PTY and left unsent
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
@@ -552,6 +553,7 @@ def _get_or_spawn(
     child_env: Optional[dict] = None,
     attach_key: Optional[str] = None,
     model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> tuple[terminal.PtyTerminal, bool]:
     """Return (terminal, reused). Reuse a live registered terminal for
     session_id or attach_key; else spawn (injecting the provider env) +
@@ -569,7 +571,8 @@ def _get_or_spawn(
 
     v3.0 (ADR-0030): `model` pins the tier, and applies to a *fresh* spawn only.
     A resume re-enters a session that already has a model; re-pinning it here
-    would silently change the tier of work already in flight."""
+    would silently change the tier of work already in flight. `effort`
+    (ADR-0032) rides the same fresh-spawn-only rule."""
     with _reg_lock:
         term = _registry.get(session_id) if session_id else None
         if term is not None and not term.is_alive():
@@ -615,6 +618,7 @@ def _get_or_spawn(
             cwd=cwd,
             provider=provider,
             model=None if session_id else model,
+            effort=None if session_id else effort,
             env=child_env,
             output_observer=_observe_terminal_output,
             input_observer=_LIFECYCLE_DETECTOR.observe_input,
@@ -1181,7 +1185,12 @@ def make_handler(repo_root: str):
               model  — pins the tier the session runs on, validated against the
                        lineup the *workspace* declares, never a list held here.
               prompt — typed into the PTY and left unsent. The board prepares
-                       the work; a person still presses Enter."""
+                       the work; a person still presses Enter.
+
+            ADR-0032 adds a third:
+              effort — pins the thinking depth. Validated against the fixed set
+                       the `claude` CLI itself accepts (not workspace-declared —
+                       that lineup belongs to the CLI, not to roles.md)."""
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length <= 0:
                 self._json(400, {"error": "empty body"})
@@ -1227,6 +1236,37 @@ def make_handler(repo_root: str):
                     )
                     return
 
+            requested_effort = body.get("effort")
+            if requested_effort is not None and not isinstance(requested_effort, str):
+                self._json(400, {"error": "effort must be a string"})
+                return
+            requested_effort = (requested_effort or "").strip().lower() or None
+            if requested_effort:
+                if requested_effort not in workspace.VALID_EFFORTS:
+                    self._json(
+                        400,
+                        {
+                            "error": f"unknown effort: {requested_effort}",
+                            "allowed": sorted(workspace.VALID_EFFORTS),
+                        },
+                    )
+                    return
+                if requested_model and workspace.model_tier(
+                    repo_root, requested_model
+                ) == "light":
+                    # ADR-0032 §SD6: the light-tier model (Haiku) rejects
+                    # `--effort` outright — it still uses `budget_tokens`.
+                    self._json(
+                        400,
+                        {
+                            "error": (
+                                "effort ไม่รองรับกับ tier light — โมเดลนี้ใช้ "
+                                "budget_tokens ไม่ใช่ effort"
+                            )
+                        },
+                    )
+                    return
+
             prompt = body.get("prompt")
             if prompt is not None and not isinstance(prompt, str):
                 self._json(400, {"error": "prompt must be a string"})
@@ -1252,7 +1292,13 @@ def make_handler(repo_root: str):
 
             try:
                 term, _reused = _get_or_spawn(
-                    None, cwd, harness_name, provider, child_env, model=requested_model
+                    None,
+                    cwd,
+                    harness_name,
+                    provider,
+                    child_env,
+                    model=requested_model,
+                    effort=requested_effort,
                 )
             except ValueError as e:
                 # e.g. model pinning asked of a harness whose flag is unverified
@@ -1279,6 +1325,7 @@ def make_handler(repo_root: str):
                         "harness": harness_name,
                         "provider": provider,
                         "model": requested_model,
+                        "effort": requested_effort,
                         "prompt_typed": prompt_typed,
                     },
                 )
@@ -1291,6 +1338,7 @@ def make_handler(repo_root: str):
                         "harness": harness_name,
                         "provider": provider,
                         "model": requested_model,
+                        "effort": requested_effort,
                         "prompt_typed": prompt_typed,
                         "message": "Session starting; retry to re-check.",
                     },
