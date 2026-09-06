@@ -244,3 +244,38 @@ export async function fetchWorkspace(refresh = false): Promise<WorkspaceResponse
   if (!res.ok) throw new Error(`workspace ${res.status}`);
   return res.json();
 }
+
+// ── Daily calendar (slices.md S9) ──
+
+export interface ScheduleBlock {
+  start: string; // "HH:MM"
+  end: string; // "HH:MM"
+  label: string;
+  domain: string;
+  minutes: number | null;
+}
+
+export interface DaySchedule {
+  date: string; // "YYYY-MM-DD"
+  present: boolean;
+  blocks: ScheduleBlock[];
+}
+
+export interface CalendarResponse {
+  center: string;
+  days: DaySchedule[];
+}
+
+export async function fetchCalendar(
+  center?: string,
+  before = 2,
+  after = 2,
+): Promise<CalendarResponse> {
+  const qs = new URLSearchParams();
+  if (center) qs.set('date', center);
+  qs.set('before', String(before));
+  qs.set('after', String(after));
+  const res = await fetch(`${BASE}/calendar?${qs.toString()}`);
+  if (!res.ok) throw new Error(`calendar ${res.status}`);
+  return res.json();
+}
