@@ -53,10 +53,17 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
         prompt: text,
       });
       // The session may not have an id yet — it gets one at the first prompt,
-      // which has not been sent. The attach page handles the id-less window.
-      window.location.href = res.session_id
-        ? `/agent?view=terminal&session_id=${encodeURIComponent(res.session_id)}`
-        : '/agent?view=terminal&harness=claude';
+      // which has not been sent. Carry the attach_key the server already
+      // issued for this PTY (ADR-0028 §SD1) so the terminal page's first WS
+      // connect attaches to it instead of spawning a second, blank PTY
+      // (risks.md S-11) — session_id, when present, is the stronger identity.
+      const params = new URLSearchParams({ view: 'terminal', harness: 'claude' });
+      if (res.session_id) {
+        params.set('session_id', res.session_id);
+      } else if (res.attach_key) {
+        params.set('attach_key', res.attach_key);
+      }
+      window.location.href = `/agent?${params.toString()}`;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'สั่งงานไม่สำเร็จ');
       setSending(false);

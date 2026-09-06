@@ -150,5 +150,47 @@ def test_client_resolves_the_reconnect_url_per_attempt():
     assert "resolveUrlRef.current?.()" in hook
 
 
+# --- dispatch surface carries the key too (S13, closes risks.md S-11) -----
+# `_get_or_spawn` has issued an attach_key to every PTY since 0028, but
+# `POST /session/start` — the dispatch surface's only spawn path — never put
+# it on the wire, and the browser never carried it back. Dispatch would type
+# the prompt into one PTY, then navigate to a page with no identity at all,
+# which spawned a second, blank PTY (S-11's "PTY ลอยเกินมาหนึ่งใบ").
+
+
+def test_session_start_returns_the_attach_key_it_already_issued():
+    src = (_ROOT / "server.py").read_text()
+    # Isolate the handler so this doesn't pass by matching some unrelated
+    # "attach_key" string elsewhere in the file.
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert body.count('"attach_key": term.attach_key') == 2, (
+        "both the 200 (id known) and 202 (id-less window) branches must "
+        "return the key — the id-less window is exactly when dispatch needs it"
+    )
+
+
+def test_dispatch_dialog_forwards_the_key_it_was_given():
+    dialog = (_ROOT / "src" / "pages" / "DispatchDialog.tsx").read_text()
+    assert "res.attach_key" in dialog, (
+        "dispatch must read attach_key off the /session/start response and "
+        "put it on the URL it navigates to, or the terminal page it opens "
+        "has no identity to attach with"
+    )
+
+
+def test_agent_page_seeds_the_first_connect_from_the_url_attach_key():
+    agent = (_ROOT / "src" / "pages" / "Agent.tsx").read_text()
+    assert "qs.get('attach_key')" in agent, (
+        "the page dispatch navigates to must read attach_key from its own "
+        "URL, not only from a control frame received after connecting"
+    )
+    assert "attachKeyRef = useRef<string | null>(initialAttachKey)" in agent, (
+        "the ref must be seeded before the first connect attempt — arriving "
+        "later is too late for buildWsUrl's initial call"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
