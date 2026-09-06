@@ -331,6 +331,74 @@ def test_default_role_is_none_when_dispatch_is_not_present(tmp_path):
     assert out["projects"][0]["default_role"] is None
 
 
+# ── a row's own `role` column overrides the file default (ADR-0035, S14) ────
+
+
+def _repo_with_row_roles(tmp_path: Path, *, team: str, row_role: str) -> Path:
+    proj = tmp_path / "projects" / "demo"
+    proj.mkdir(parents=True)
+    (proj / "slices.md").write_text(
+        f"---\nclient: winona\nteam: {team}\n---\n\n"
+        "| # | ชิ้น | วัน | สถานะ | ผล | role |\n"
+        "| :-: | --- | --- | :-: | --- | :-: |\n"
+        "| **M0** | ทำของกลไก | จ. | ⬜ | ได้ของ | |\n"
+        f"| **M1** | ตัดสินสถาปัตยกรรม | จ. | ⬜ | ตัดสินแล้ว | {row_role} |\n",
+        encoding="utf-8",
+    )
+    sops = tmp_path / "docs" / "sops"
+    sops.mkdir(parents=True)
+    (sops / "sop-agent-orchestration.md").write_text(SOP, encoding="utf-8")
+    people = tmp_path / "team-os" / "people"
+    people.mkdir(parents=True)
+    (people / "roles.md").write_text(ROLES_WITH_OWNERSHIP, encoding="utf-8")
+    return tmp_path
+
+
+def test_row_role_overrides_the_file_default_for_that_row_only(tmp_path):
+    out = workspace.workspace_overview(
+        str(_repo_with_row_roles(tmp_path, team="developer", row_role="qa")),
+        use_cache=False,
+    )
+    slices = out["projects"][0]["slices"]
+    assert out["projects"][0]["default_role"] == "Developer"
+    assert slices[0]["role"] == "Developer"  # blank cell → file default
+    assert slices[1]["role"] == "QA"  # row override, direct role name
+
+
+def test_row_role_resolves_a_discipline_same_as_team_does(tmp_path):
+    """The row cell gets the same latitude `team:` has — a discipline name,
+    not only a bare role name (ADR-0035 §SD2: one resolver, not two)."""
+    out = workspace.workspace_overview(
+        str(_repo_with_row_roles(tmp_path, team="developer", row_role="forge")),
+        use_cache=False,
+    )
+    assert out["projects"][0]["slices"][1]["role"] == "Product Owner"
+
+
+def test_unresolved_row_role_falls_back_to_file_default_not_a_guess(tmp_path):
+    out = workspace.workspace_overview(
+        str(_repo_with_row_roles(tmp_path, team="developer", row_role="nonexistent")),
+        use_cache=False,
+    )
+    assert out["projects"][0]["slices"][1]["role"] == "Developer"
+
+
+def test_table_without_a_role_column_still_gets_the_file_default_per_row(tmp_path):
+    """Backward compatibility: a file that never adopts the `role` column
+    (every file before this ADR) keeps working exactly as before — every row
+    just inherits `default_role`."""
+    out = workspace.workspace_overview(
+        str(_repo_with_team(tmp_path, "developer")), use_cache=False
+    )
+    slices = out["projects"][0]["slices"]
+    assert slices and all(s["role"] == "Developer" for s in slices)
+
+
+def test_slice_role_is_none_when_dispatch_is_not_present(tmp_path):
+    out = workspace.workspace_overview(str(_repo(tmp_path, roles=None)), use_cache=False)
+    slices = out["projects"][0]["slices"]
+    assert slices and all(s["role"] is None for s in slices)
+
 
 # ── the flag actually reaches argv ──────────────────────────────────────────
 

@@ -55,6 +55,12 @@ class Slice:
     day: str
     column: str
     note: str
+    # Raw text of an opt-in `role` column cell (ADR-0035), or "" when the file
+    # has no such column / the row leaves it blank. Resolved into an actual
+    # `dispatch.roles[].role` value by `_attach_default_roles` before this
+    # reaches the payload — by the time a card renders, it is never the raw
+    # cell text, only the effective role or the project's own default.
+    role: str = ""
 
 
 def workspace_overview(
@@ -230,6 +236,13 @@ def _parse_slices(path: Path) -> list[Slice]:
     with a stable column *order* (id | title | day | status | note) but header
     wording that is free to change. A header-name parser would break on a
     rewording that a human would not even notice.
+
+    One column is the exception: an optional trailing `role` column (ADR-0035)
+    is opt-in per file, so it cannot follow a fixed index — some files have 5
+    cells, some 6 (the existing `ADR` column, ADR-0031). It is found instead by
+    scanning the header row for a cell whose text is exactly `role` (English,
+    case-insensitive) — a keyword deliberately left untranslated so it can
+    never collide with the Thai prose headers that stay free to reword.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -238,6 +251,7 @@ def _parse_slices(path: Path) -> list[Slice]:
 
     rows: list[Slice] = []
     in_table = False
+    role_col: Optional[int] = None
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
@@ -251,13 +265,22 @@ def _parse_slices(path: Path) -> list[Slice]:
             in_table = True  # separator row
             continue
         if not in_table:
-            continue  # header row
+            # header row — look for the opt-in `role` column (ADR-0035 §SD1)
+            for i, cell in enumerate(cells):
+                if _strip_md(cell).strip().lower() == "role":
+                    role_col = i
+            continue
 
         ident = _strip_md(cells[0])
         title = _strip_md(cells[1])
         day = _strip_md(cells[2])
         status_cell = cells[3]
         note = _strip_md(cells[4]) if len(cells) > 4 else ""
+        role = (
+            _strip_md(cells[role_col])
+            if role_col is not None and role_col < len(cells)
+            else ""
+        )
 
         rows.append(
             Slice(
@@ -266,6 +289,7 @@ def _parse_slices(path: Path) -> list[Slice]:
                 day=day,
                 column=_column_for(status_cell, note),
                 note=note,
+                role=role,
             )
         )
     return rows
@@ -515,12 +539,16 @@ def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
 def _default_role_for_team(
     team: str, role_disciplines: dict[str, list[str]], roles: list[dict]
 ) -> Optional[str]:
-    """Which of `dispatch.roles` a project's `team:` frontmatter points to.
+    """Which of `dispatch.roles` a role-ish string points to.
 
-    `team:` is written freely across projects — sometimes a discipline
-    (`dev`, `forge`), sometimes a role name directly (`product-owner`).
-    Both are tried; an unrecognised value resolves to nothing rather than a
-    guess, so the caller falls back to its own default (ADR-0033 §SD1).
+    Despite the name, this resolves any string written the way `team:`
+    frontmatter is — sometimes a discipline (`dev`, `forge`), sometimes a role
+    name directly (`product-owner`) — which is also exactly the latitude a
+    row's optional `role` cell gets (ADR-0035 §SD2: one resolver for both, not
+    a second table that can drift from this one). Both forms are tried; an
+    unrecognised value resolves to nothing rather than a guess, so the caller
+    falls back to its own default (ADR-0033 §SD1 for the file level, ADR-0035
+    §SD3 for the row level).
     """
     if not team:
         return None
@@ -537,12 +565,23 @@ def _default_role_for_team(
 
 
 def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> None:
-    """Sets each project's `default_role` — the dispatch box should open on
-    the role the project's own work belongs to, not the first row of a table
-    it has nothing to do with (ADR-0033, closes risks.md S-09)."""
+    """Sets each project's `default_role`, then each of its slices' `role`.
+
+    `default_role`: the dispatch box should open on the role the project's own
+    work belongs to, not the first row of a table it has nothing to do with
+    (ADR-0033, closes risks.md S-09).
+
+    Each slice's `role` starts as the raw text of its optional `role` column
+    cell (`_parse_slices`) and is overwritten here with the resolved role —
+    that row's own override when it resolves, else the project's
+    `default_role` (ADR-0035 §SD3). A card's `role` is therefore always either
+    a real `dispatch.roles[].role` value or `None`, never unresolved text.
+    """
     if not dispatch.get("present"):
         for p in projects:
             p["default_role"] = None
+            for s in p["slices"]:
+                s["role"] = None
         return
     role_disciplines = _parse_role_disciplines(
         root / "team-os" / "people" / "roles.md"
@@ -551,6 +590,13 @@ def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> N
         p["default_role"] = _default_role_for_team(
             p.get("team", ""), role_disciplines, dispatch["roles"]
         )
+        for s in p["slices"]:
+            s["role"] = (
+                _default_role_for_team(
+                    s.get("role", ""), role_disciplines, dispatch["roles"]
+                )
+                or p["default_role"]
+            )
 
 
 def _strip_md(cell: str) -> str:

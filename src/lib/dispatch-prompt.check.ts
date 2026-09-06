@@ -22,6 +22,7 @@ const slice: WorkspaceSlice = {
   day: "อ. 09-08",
   column: "todo",
   note: "โค้ดตรงกับ ADR",
+  role: null,
 };
 
 const project: WorkspaceProject = {

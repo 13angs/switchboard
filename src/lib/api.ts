@@ -194,6 +194,9 @@ export interface WorkspaceSlice {
   day: string;
   column: string;
   note: string;
+  /** Effective role for this row — its own `role` column cell when the file
+   *  has one and it resolves, else the project's `default_role` (ADR-0035). */
+  role: string | null;
 }
 
 export interface WorkspaceProject {
