@@ -194,6 +194,9 @@ export interface WorkspaceProject {
   /** From the project's own slices.md frontmatter — used to build the Assignment id. */
   client: string;
   team: string;
+  /** The `dispatch.roles[].role` this project's `team:` resolves to, or null
+   *  when it does not match a known role or discipline (ADR-0033). */
+  default_role: string | null;
   has: { scope: boolean; risks: boolean; hld: boolean };
 }
 
