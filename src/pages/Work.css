@@ -521,6 +521,25 @@
   color: var(--blocked);
   background: var(--blocked-soft);
 }
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
 .calendar-scale {
   display: flex;
   justify-content: space-between;
@@ -529,13 +548,25 @@
   font-size: 10px;
   color: var(--faint);
 }
+.cal-day {
+  border-bottom: 1px solid var(--line-soft);
+}
+.cal-day:last-child {
+  border-bottom: none;
+}
 .cal-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
-.cal-row.cal-today .cal-date {
+.cal-day.cal-today .cal-date {
   color: var(--accent);
   font-weight: 600;
 }
@@ -544,6 +575,11 @@
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
+}
+.cal-caret {
+  flex: 0 0 12px;
+  font-size: 10px;
+  color: var(--faint);
 }
 .cal-bar {
   position: relative;
@@ -568,7 +604,6 @@
   top: 1px;
   bottom: 1px;
   border-radius: 2px;
-  cursor: default;
 }
 .cal-work {
   background: var(--accent);
@@ -581,4 +616,62 @@
 }
 .cal-other {
   background: var(--idle);
+}
+
+/* the readable part — what "แถบสี" alone cannot say on a touch device */
+.cal-agenda {
+  list-style: none;
+  margin: 0 0 8px 92px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cal-agenda-row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.cal-agenda-row.cal-work {
+  border-left-color: var(--accent);
+  background: none;
+}
+.cal-agenda-row.cal-personal {
+  border-left-color: var(--ok);
+  background: none;
+}
+.cal-agenda-row.cal-learning {
+  border-left-color: var(--awaiting);
+  background: none;
+}
+.cal-agenda-row.cal-other {
+  border-left-color: var(--idle);
+  background: none;
+}
+.ar-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ar-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.ar-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.cal-agenda-empty {
+  margin: 0 0 8px 92px;
+  font-size: 11px;
+  color: var(--faint);
 }
