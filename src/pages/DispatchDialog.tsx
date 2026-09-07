@@ -5,7 +5,12 @@ import {
   type WorkspaceProject,
   type WorkspaceSlice,
 } from '../lib/api';
-import { composePrompt, type DispatchRole } from '../lib/dispatch-prompt';
+import {
+  composePrompt,
+  promptShapeFor,
+  dispatchLabel,
+  type DispatchRole,
+} from '../lib/dispatch-prompt';
 
 interface Props {
   project: WorkspaceProject;
@@ -20,6 +25,10 @@ interface Props {
  * The prompt is shown in full and stays editable: it is typed into the session's
  * input box and left there unsent, so what the operator reads here is exactly
  * what they will press Enter on. Nothing starts running from this dialog.
+ *
+ * A card from the 🖐️ column opens the same dialog on the `prepare` shape
+ * (ADR-0036 §SD5) — same roles, same tier pinning, a prompt that hands back
+ * options and one proposal instead of doing the row.
  */
 export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
   const roles = dispatch.present ? dispatch.roles : [];
@@ -34,9 +43,10 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
   const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
   const role: DispatchRole | undefined = roles.find((r) => r.role === roleName);
 
+  const shape = promptShapeFor(slice.column);
   const composed = useMemo(
-    () => (role ? composePrompt(project, slice, role) : ''),
-    [project, slice, role],
+    () => (role ? composePrompt(project, slice, role, shape) : ''),
+    [project, slice, role, shape],
   );
   const [prompt, setPrompt] = useState<string | null>(null);
   const text = prompt ?? composed;
@@ -78,12 +88,13 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
         className="dlg"
         role="dialog"
         aria-modal="true"
-        aria-label="สั่งงาน"
+        aria-label={dispatchLabel(shape)}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dlg-head">
           <h3>
-            สั่งงาน · <code>{slice.id !== '—' ? slice.id : project.name}</code>
+            {dispatchLabel(shape)} ·{' '}
+            <code>{slice.id !== '—' ? slice.id : project.name}</code>
           </h3>
           <button className="dlg-x" onClick={onClose} aria-label="ปิด">
             ✕
@@ -132,6 +143,14 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
                   · แผนที่มาจาก {dispatch.source.roles} +{' '}
                   {dispatch.source.tiers}
                 </span>
+              </p>
+            )}
+
+            {shape === 'prepare' && (
+              <p className="dlg-prepare">
+                แถวนี้อยู่คอลัมน์ <b>คนเคาะ</b> — session
+                นี้เตรียมตัวเลือกกับข้อเสนอมาให้แล้วหยุด ·{' '}
+                <b>ไม่ merge · ไม่ลบ branch · ไม่เคาะแทนคุณ</b>
               </p>
             )}
 
