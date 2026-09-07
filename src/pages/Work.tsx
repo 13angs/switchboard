@@ -6,6 +6,7 @@ import {
   type WorkspaceSlice,
   type WorkspaceDispatch,
 } from '../lib/api';
+import { promptShapeFor, dispatchLabel } from '../lib/dispatch-prompt';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import './Work.css';
@@ -22,10 +23,17 @@ const COLUMNS = [
 /** `off` is not a column: days with no work are context, not a queue. */
 const HIDDEN_COLUMN = 'off';
 
-/** Columns whose cards can be handed to a role. `done` is finished; `owner`
- *  is waiting on a person and dispatching it would be the board overruling
- *  the 🖐️ mark that put it there. */
-const DISPATCHABLE = new Set(['running', 'next', 'todo']);
+/** Columns whose cards can be handed to a role.
+ *
+ *  `owner` joined the set at ADR-0036 §SD5, which read the 🖐️ mark one step
+ *  narrower than ADR-0030 §SD5 did: the mark holds back the *action*, not the
+ *  *thinking*, so a card in it can open a session that prepares the decision.
+ *  What differs is the prompt, not the button's existence — `promptShapeFor()`
+ *  decides which, and the button wears the matching word.
+ *
+ *  `done` stays closed: a finished piece has nothing to prepare, and reopening
+ *  one means editing the file, not pressing a button on a board that only reads. */
+const DISPATCHABLE = new Set(['running', 'next', 'todo', 'owner']);
 
 export function WorkPage() {
   const [data, setData] = useState<WorkspaceResponse | null>(null);
@@ -168,6 +176,7 @@ function ProjectBoard({
       <div className="cols">
         {COLUMNS.map((col) => {
           const items = project.slices.filter((s) => s.column === col.key);
+          const shape = promptShapeFor(col.key);
           return (
             <div className="col" key={col.key}>
               <div className={`col-head c-${col.key}`}>
@@ -183,17 +192,29 @@ function ProjectBoard({
                   <span className="title">{s.title}</span>
                   {s.note && <span className="note">{s.note}</span>}
                   {DISPATCHABLE.has(col.key) && (
-                    <button
-                      className="dispatch"
-                      onClick={() => onDispatch(s)}
-                      title={
-                        dispatch.present
-                          ? 'เลือก role แล้วเปิด session ที่ปักหมุด tier ไว้'
-                          : 'อ่านแผนที่ role → model ไม่ได้ — กดเพื่อดูเหตุผล'
-                      }
-                    >
-                      สั่งงาน
-                    </button>
+                    <>
+                      <button
+                        className={`dispatch s-${shape}`}
+                        onClick={() => onDispatch(s)}
+                        title={
+                          !dispatch.present
+                            ? 'อ่านแผนที่ role → model ไม่ได้ — กดเพื่อดูเหตุผล'
+                            : shape === 'prepare'
+                              ? 'เลือก role แล้วเปิด session ที่เตรียมเรื่องให้คุณเคาะ'
+                              : 'เลือก role แล้วเปิด session ที่ปักหมุด tier ไว้'
+                        }
+                      >
+                        {dispatchLabel(shape)}
+                      </button>
+                      {/* Printed, never a `title=`: the owner reads this board
+                          on a tablet and hover does not exist there — the
+                          lesson S9 paid for once already (ADR-0036 §SD5(ค)). */}
+                      {shape === 'prepare' && (
+                        <span className="dispatch-why">
+                          ปุ่มนี้ไม่ลงมือแทนคุณ — ได้ตัวเลือกกับข้อเสนอ แล้วคุณเคาะ
+                        </span>
+                      )}
+                    </>
                   )}
                 </article>
               ))}

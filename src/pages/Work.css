@@ -313,6 +313,17 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+/* The 🖐️ column's button says what it does in words, not on hover — the owner
+   reads this board on a tablet (ADR-0036 §SD5(ค), lesson of S9). */
+.card .dispatch.s-prepare {
+  border-style: dashed;
+}
+.card .dispatch-why {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--faint);
+}
 
 /* ── dispatch dialog ── */
 .dlg-backdrop {
@@ -414,6 +425,18 @@
 .dlg-model .src {
   color: var(--faint);
   font-size: 11px;
+}
+.dlg-prepare {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-prepare b {
+  color: var(--fg);
 }
 .dlg-label {
   font-size: 12px;
