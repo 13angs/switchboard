@@ -247,23 +247,56 @@ export async function fetchWorkspace(refresh = false): Promise<WorkspaceResponse
 
 // ── Daily calendar (slices.md S9) ──
 
+/** One row of team-os/ways-of-working/rituals.md § เจ้าของของแต่ละจังหวะ —
+ *  the second register the board may dispatch from (ADR-0036 §SD1).
+ *  `dispatchable` is false when `role`, `client` or the office behind them did
+ *  not resolve; the board then shows the row and *why*, and no button — there
+ *  is no default for any of those fields (§SD3). */
+export interface Ritual {
+  key: string;
+  name: string;
+  role: string | null;
+  client: string;
+  office: string | null;
+  /** `<client>/<office>/<role>/<key>` — four full segments, no `-` (§SD3). */
+  assignment: string | null;
+  /** Where the ritual is defined (runbook + step numbers), workspace-relative. */
+  reads: string;
+  dispatchable: boolean;
+  missing: string[];
+}
+
 export interface ScheduleBlock {
   start: string; // "HH:MM"
   end: string; // "HH:MM"
   label: string;
   domain: string;
   minutes: number | null;
+  /** The ritual this bar carries, or null when its label names no key. */
+  ritual: Ritual | null;
+  /** Keys that all matched this one label — the bar gets no button, because
+   *  choosing between them would be a guess (ADR-0036 §SD2). */
+  ritual_conflict: string[] | null;
 }
 
 export interface DaySchedule {
   date: string; // "YYYY-MM-DD"
   present: boolean;
   blocks: ScheduleBlock[];
+  /** Rituals that declare a key but matched no bar this day (ADR-0036 §SD6).
+   *  Read from the day's *plan* — it does not mean "not run yet". */
+  unmapped: Ritual[];
 }
 
 export interface CalendarResponse {
   center: string;
   days: DaySchedule[];
+  rituals: {
+    present: boolean;
+    reason: string;
+    source: string;
+    declared: number;
+  };
 }
 
 export async function fetchCalendar(

@@ -6,7 +6,7 @@ import {
   type WorkspaceSlice,
   type WorkspaceDispatch,
 } from '../lib/api';
-import { promptShapeFor, dispatchLabel } from '../lib/dispatch-prompt';
+import { composePrompt, promptShapeFor, dispatchLabel } from '../lib/dispatch-prompt';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import './Work.css';
@@ -125,7 +125,7 @@ export function WorkPage() {
         </div>
       )}
 
-      <DayCalendar />
+      <DayCalendar dispatch={data?.dispatch ?? null} />
 
       {data?.projects.map((p) => (
         <ProjectBoard
@@ -136,15 +136,44 @@ export function WorkPage() {
         />
       ))}
 
-      {picked && data && (
-        <DispatchDialog
-          project={picked.project}
-          slice={picked.slice}
-          dispatch={data.dispatch}
-          onClose={() => setPicked(null)}
-        />
-      )}
+      {picked && data && <SliceDialog {...picked} dispatch={data.dispatch} onClose={() => setPicked(null)} />}
     </div>
+  );
+}
+
+/** The slice half of the dispatch surface: it decides the shape from the card's
+ *  column, then hands the dialog a composer. The dialog itself knows nothing
+ *  about slices — the calendar's rituals reach it the same way (ADR-0036 §SD4). */
+function SliceDialog({
+  project,
+  slice,
+  dispatch,
+  onClose,
+}: {
+  project: WorkspaceProject;
+  slice: WorkspaceSlice;
+  dispatch: WorkspaceDispatch;
+  onClose: () => void;
+}) {
+  const shape = promptShapeFor(slice.column);
+  return (
+    <DispatchDialog
+      action={dispatchLabel(shape)}
+      subject={slice.id !== '—' ? slice.id : project.name}
+      dispatch={dispatch}
+      preferredRole={slice.role ?? project.default_role}
+      notice={
+        shape === 'prepare' ? (
+          <p className="dlg-prepare">
+            แถวนี้อยู่คอลัมน์ <b>คนเคาะ</b> — session
+            นี้เตรียมตัวเลือกกับข้อเสนอมาให้แล้วหยุด ·{' '}
+            <b>ไม่ merge · ไม่ลบ branch · ไม่เคาะแทนคุณ</b>
+          </p>
+        ) : null
+      }
+      compose={(role) => composePrompt(project, slice, role, shape)}
+      onClose={onClose}
+    />
   );
 }
 

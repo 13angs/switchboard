@@ -7,12 +7,13 @@
  */
 import {
   composePrompt,
+  composeRitualPrompt,
   assignmentId,
   promptShapeFor,
   dispatchLabel,
   type DispatchRole,
 } from "./dispatch-prompt";
-import type { WorkspaceProject, WorkspaceSlice } from "./api";
+import type { Ritual, WorkspaceProject, WorkspaceSlice } from "./api";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`check failed: ${msg}`);
@@ -181,5 +182,82 @@ for (const f of [
   "projects/ai-chatbot/slices.md",
 ])
   assert(prep.includes(f), `${f} cited in the prepare shape too`);
+
+// ── ADR-0036 §SD4 — the third shape: a ritual off a calendar bar ──
+
+const ritual: Ritual = {
+  key: "EOD checkpoint",
+  name: "EOD checkpoint",
+  role: "Product Owner",
+  client: "internal",
+  office: "business",
+  assignment: "internal/business/product-owner/eod-checkpoint",
+  reads: "meta/daily/plan.md § จังหวะวันทำงาน",
+  dispatchable: true,
+  missing: [],
+};
+
+const po: DispatchRole = {
+  role: "Product Owner",
+  tier: "standard",
+  model: "claude-sonnet-5",
+  effort: "medium",
+};
+
+const rp = composeRitualPrompt(ritual, po, {
+  date: "2026-09-08",
+  start: "16:45",
+  end: "17:00",
+});
+
+assert(rp.includes("Product Owner"), "ritual prompt names the role");
+assert(rp.includes("standard"), "ritual prompt names the tier");
+assert(rp.includes("EOD checkpoint"), "ritual named");
+assert(
+  rp.includes("2026-09-08") && rp.includes("16:45–17:00"),
+  "the run this bar stands for is stated — three comm-windows share one key",
+);
+
+// The runbook is pointed at, never unrolled: a prompt that inlined the steps
+// would be a second copy of the runbook (team/README.md § Core principle).
+assert(rp.includes(ritual.reads), "the ritual's own definition pointer is cited");
+for (const f of [
+  "team-os/ways-of-working/rituals.md",
+  "team-os/ways-of-working/definition-of-done.md",
+  "team-os/ways-of-working/stuck-rule.md",
+  "team-os/decisions/README.md",
+])
+  assert(rp.includes(f), `${f} cited in the ritual shape too`);
+assert(rp.includes("ย้อนกลับได้"), "the central rules ride along unchanged");
+
+// §SD3 — four full segments, and the `-` disclaimer that belongs to the
+// slices.md path must not leak onto this one: the office really did resolve.
+assert(
+  rp.includes("Assignment: internal/business/product-owner/eod-checkpoint"),
+  "the id is the one rituals.md declares",
+);
+assert(!rp.includes("/-/"), "no unresolved segment in a ritual id");
+assert(!rp.includes("resolve เอง"), "nothing left for the session to resolve");
+// The id names the ritual, not today's run of it (rituals.md rule 1).
+assert(!rp.includes("Assignment: internal/business/product-owner/eod-checkpoint-"),
+  "no date suffix on the id");
+assert(rp.includes("ห้ามต่อท้ายวันที่"), "and the session is told why");
+
+// The one rule this surface can break by accident, because it works inside the
+// day file: recording what happened is fine, changing what the day committed to
+// is not.
+assert(rp.includes("แผนของวันเป็นข้อผูกพัน"), "the day-plan guard is stated");
+
+// A register row with no definition pointer still dispatches (§SD3 blocks on
+// key/role/client only) — but the prompt must not pretend it knows the steps.
+const noReads = composeRitualPrompt({ ...ritual, reads: "" }, po, {
+  date: "2026-09-08",
+  start: "16:45",
+  end: "17:00",
+});
+assert(
+  noReads.includes("⚠️") && noReads.includes("อย่าเดาขั้นตอนเอง"),
+  "a missing definition pointer is said out loud, not papered over",
+);
 
 console.log("dispatch-prompt check: OK");

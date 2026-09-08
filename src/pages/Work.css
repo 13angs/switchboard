@@ -698,3 +698,75 @@
   font-size: 11px;
   color: var(--faint);
 }
+
+/* ── Dispatching a ritual off a calendar bar (ADR-0036 §SD2 · §SD4 · §SD6) ── */
+
+.cal-ritual-off {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--awaiting);
+}
+
+/* A bar whose label names a declared ritual reads slightly brighter than the
+   rest — the same color still carries the domain, so this is a second signal
+   on the strip, not a replacement for the agenda row underneath. */
+.cal-block.cal-ritual {
+  outline: 1px solid var(--fg-dim);
+  outline-offset: -1px;
+}
+
+/* Sits in the agenda row, not on the 3px strip: a bar is not a touch target on
+   a tablet, which is the lesson S9 already paid for once. */
+.ar-dispatch {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.ar-dispatch:hover,
+.ar-dispatch:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Why a row that looks dispatchable has no button. Printed, never a title=. */
+.ar-conflict {
+  color: var(--awaiting);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.cal-unmapped {
+  margin: 4px 0 8px 92px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.cal-unmapped-key {
+  margin-right: 8px;
+}
+.cal-unmapped-key em {
+  color: var(--awaiting);
+  font-style: normal;
+}
+.cal-unmapped-why {
+  color: var(--faint);
+}
+
+.dlg-ritual,
+.dlg-fixed-role {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-ritual b {
+  color: var(--fg);
+}

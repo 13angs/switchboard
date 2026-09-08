@@ -1,21 +1,23 @@
-import { useState, useMemo } from 'react';
-import {
-  startSession,
-  type WorkspaceDispatch,
-  type WorkspaceProject,
-  type WorkspaceSlice,
-} from '../lib/api';
-import {
-  composePrompt,
-  promptShapeFor,
-  dispatchLabel,
-  type DispatchRole,
-} from '../lib/dispatch-prompt';
+import { useState, useMemo, type ReactNode } from 'react';
+import { startSession, type WorkspaceDispatch } from '../lib/api';
+import type { DispatchRole } from '../lib/dispatch-prompt';
 
 interface Props {
-  project: WorkspaceProject;
-  slice: WorkspaceSlice;
+  /** The word this dialog and its send button wear — `dispatchLabel(shape)`. */
+  action: string;
+  /** What is being handed out: a slice id, a project, or a ritual key. */
+  subject: string;
   dispatch: WorkspaceDispatch;
+  /** Which role the picker opens on. */
+  preferredRole: string | null;
+  /** Set when the row names its own owner and the operator may not swap it —
+   *  a ritual's id embeds its role and office, so a different role would run
+   *  under an id that names someone else (ADR-0036 §SD3). */
+  fixedRole?: { role: string; why: string } | null;
+  /** An extra paragraph above the prompt, for a shape that needs to say what
+   *  it will not do. */
+  notice?: ReactNode;
+  compose: (role: DispatchRole) => string;
   onClose: () => void;
 }
 
@@ -26,28 +28,31 @@ interface Props {
  * input box and left there unsent, so what the operator reads here is exactly
  * what they will press Enter on. Nothing starts running from this dialog.
  *
- * A card from the 🖐️ column opens the same dialog on the `prepare` shape
- * (ADR-0036 §SD5) — same roles, same tier pinning, a prompt that hands back
- * options and one proposal instead of doing the row.
+ * Deliberately ignorant of *what* it is dispatching. Three subjects reach it —
+ * a slice in the `act` shape, a slice in the `prepare` shape (ADR-0036 §SD5),
+ * and a ritual off a calendar bar (§SD4) — and each hands in its own composed
+ * text. Keeping one dialog keeps one place that spawns a session, so the tier
+ * pinning and the "we do not press Enter" promise cannot come apart per surface.
  */
-export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
-  const roles = dispatch.present ? dispatch.roles : [];
-  // The card opens on the role its own row belongs to. Most rows carry no
-  // override and get the project's own role (project.default_role, derived
-  // from slices.md `team:`, ADR-0033, closes risks.md S-09); a row with its
-  // own `role` column cell (ADR-0035, closes S14) opens on that role instead
-  // — e.g. an architecture-decision row in an otherwise all-`developer` file.
-  // Unrecognised values in either field still fall back to the first role,
-  // same as before both fixes.
-  const defaultRole = roles.find((r) => r.role === (slice.role ?? project.default_role));
+export function DispatchDialog({
+  action,
+  subject,
+  dispatch,
+  preferredRole,
+  fixedRole = null,
+  notice,
+  compose,
+  onClose,
+}: Props) {
+  const all = dispatch.present ? dispatch.roles : [];
+  // A fixed role narrows the picker to one entry rather than hiding it: the
+  // operator still has to see which role and which tier is about to run.
+  const roles = fixedRole ? all.filter((r) => r.role === fixedRole.role) : all;
+  const defaultRole = roles.find((r) => r.role === preferredRole);
   const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
   const role: DispatchRole | undefined = roles.find((r) => r.role === roleName);
 
-  const shape = promptShapeFor(slice.column);
-  const composed = useMemo(
-    () => (role ? composePrompt(project, slice, role, shape) : ''),
-    [project, slice, role, shape],
-  );
+  const composed = useMemo(() => (role ? compose(role) : ''), [role, compose]);
   const [prompt, setPrompt] = useState<string | null>(null);
   const text = prompt ?? composed;
 
@@ -88,13 +93,12 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
         className="dlg"
         role="dialog"
         aria-modal="true"
-        aria-label={dispatchLabel(shape)}
+        aria-label={action}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dlg-head">
           <h3>
-            {dispatchLabel(shape)} ·{' '}
-            <code>{slice.id !== '—' ? slice.id : project.name}</code>
+            {action} · <code>{subject}</code>
           </h3>
           <button className="dlg-x" onClick={onClose} aria-label="ปิด">
             ✕
@@ -119,6 +123,7 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
                 <button
                   key={r.role}
                   className={`role${r.role === roleName ? ' on' : ''}`}
+                  disabled={!!fixedRole}
                   onClick={() => {
                     setRoleName(r.role);
                     setPrompt(null); // re-compose for the new role
@@ -129,6 +134,8 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
                 </button>
               ))}
             </div>
+
+            {fixedRole && <p className="dlg-fixed-role">{fixedRole.why}</p>}
 
             {role && (
               <p className="dlg-model">
@@ -146,13 +153,7 @@ export function DispatchDialog({ project, slice, dispatch, onClose }: Props) {
               </p>
             )}
 
-            {shape === 'prepare' && (
-              <p className="dlg-prepare">
-                แถวนี้อยู่คอลัมน์ <b>คนเคาะ</b> — session
-                นี้เตรียมตัวเลือกกับข้อเสนอมาให้แล้วหยุด ·{' '}
-                <b>ไม่ merge · ไม่ลบ branch · ไม่เคาะแทนคุณ</b>
-              </p>
-            )}
+            {notice}
 
             <label className="dlg-label" htmlFor="dispatch-prompt">
               ข้อความที่จะพิมพ์ลงในห้อง — <b>ยังไม่กด Enter ให้</b>
