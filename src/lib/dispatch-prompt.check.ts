@@ -8,6 +8,7 @@
 import {
   composePrompt,
   composeRitualPrompt,
+  composeGrillPrompt,
   assignmentId,
   promptShapeFor,
   dispatchLabel,
@@ -259,5 +260,55 @@ assert(
   noReads.includes("⚠️") && noReads.includes("อย่าเดาขั้นตอนเอง"),
   "a missing definition pointer is said out loud, not papered over",
 );
+
+// ── ADR-0037 — the fourth shape: grill, before a row exists ──
+
+const grillRole: DispatchRole = {
+  role: "forge",
+  tier: "heavy",
+  model: "claude-opus-5",
+  effort: "high",
+};
+
+const gp = composeGrillPrompt(project, grillRole);
+
+assert(gp.includes("forge"), "grill prompt names the role literally");
+assert(gp.includes("heavy"), "grill prompt names the tier picked in the dialog");
+assert(
+  gp.includes(`projects/${project.name}/slices.md`),
+  "grill points at the project's own slices.md",
+);
+assert(gp.includes("ไม่ implement เอง"), "grill states it does not implement");
+assert(
+  gp.includes("แก้ได้เฉพาะ") && gp.includes("ห้ามแตะโค้ดหรือไฟล์อื่น"),
+  "grill's scope line names the one file it may touch",
+);
+assert(
+  gp.includes("Assignment: winona/-/forge/"),
+  "grill's Assignment names the literal role forge, not a resolved one",
+);
+assert(
+  gp.includes("Team-Slug-Approved: Don"),
+  "grill's trailer contract is stated up front, per ADR-0037 §SD1",
+);
+assert(
+  gp.includes("sop-work-ownership.md"),
+  "grill points at the Team-Slug-Approved precedent rather than copying it",
+);
+// The three-file spine and the central rules still ride along — grill is a
+// team-os session like the other three shapes, not a special case that skips
+// the stop-rule / DoD pointers.
+for (const f of [
+  "team-os/ways-of-working/definition-of-done.md",
+  "team-os/ways-of-working/stuck-rule.md",
+  "team-os/decisions/README.md",
+])
+  assert(gp.includes(f), `${f} cited in the grill shape too`);
+assert(gp.includes("ย้อนกลับได้"), "the central rules ride along unchanged");
+
+// A project missing scope.md is not told to read it — same discipline as the
+// other three shapes.
+const grillBare = composeGrillPrompt(bare, grillRole);
+assert(!grillBare.includes("scope.md"), "absent scope.md not cited in grill");
 
 console.log("dispatch-prompt check: OK");

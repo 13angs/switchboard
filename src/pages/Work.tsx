@@ -6,7 +6,12 @@ import {
   type WorkspaceSlice,
   type WorkspaceDispatch,
 } from '../lib/api';
-import { composePrompt, promptShapeFor, dispatchLabel } from '../lib/dispatch-prompt';
+import {
+  composePrompt,
+  composeGrillPrompt,
+  promptShapeFor,
+  dispatchLabel,
+} from '../lib/dispatch-prompt';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import './Work.css';
@@ -43,6 +48,7 @@ export function WorkPage() {
     project: WorkspaceProject;
     slice: WorkspaceSlice;
   } | null>(null);
+  const [grilling, setGrilling] = useState<WorkspaceProject | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -133,10 +139,18 @@ export function WorkPage() {
           project={p}
           dispatch={data.dispatch}
           onDispatch={(slice) => setPicked({ project: p, slice })}
+          onGrill={() => setGrilling(p)}
         />
       ))}
 
       {picked && data && <SliceDialog {...picked} dispatch={data.dispatch} onClose={() => setPicked(null)} />}
+      {grilling && data && (
+        <GrillDialog
+          project={grilling}
+          dispatch={data.dispatch}
+          onClose={() => setGrilling(null)}
+        />
+      )}
     </div>
   );
 }
@@ -177,14 +191,60 @@ function SliceDialog({
   );
 }
 
+/**
+ * The grill half of the dispatch surface (ADR-0037). Unlike `SliceDialog`, it
+ * hands the dialog a tier/effort picker instead of a role — grill runs before
+ * any row exists to resolve a role from (§SD1), so there is nothing for
+ * `dispatch.roles` to look `forge` up in.
+ */
+function GrillDialog({
+  project,
+  dispatch,
+  onClose,
+}: {
+  project: WorkspaceProject;
+  dispatch: WorkspaceDispatch;
+  onClose: () => void;
+}) {
+  return (
+    <DispatchDialog
+      action="grill slices"
+      subject={project.name}
+      dispatch={dispatch}
+      preferredRole={null}
+      tierPicker={
+        dispatch.present
+          ? {
+              role: 'forge',
+              tiers: dispatch.tiers,
+              defaultTier: 'heavy',
+              defaultEffort: 'high',
+            }
+          : null
+      }
+      openMode="new-tab"
+      notice={
+        <p className="dlg-grill">
+          session นี้ <b>ไม่ implement เอง</b> — คุยจนตกผลึกแล้วเปิด PR ที่แก้เฉพาะ{' '}
+          <code>slices.md</code> ของ {project.name} เท่านั้น
+        </p>
+      }
+      compose={(role) => composeGrillPrompt(project, role)}
+      onClose={onClose}
+    />
+  );
+}
+
 function ProjectBoard({
   project,
   dispatch,
   onDispatch,
+  onGrill,
 }: {
   project: WorkspaceProject;
   dispatch: WorkspaceDispatch;
   onDispatch: (slice: WorkspaceSlice) => void;
+  onGrill: () => void;
 }) {
   const missing = (['scope', 'risks', 'hld'] as const).filter(
     (k) => !project.has[k],
@@ -193,6 +253,13 @@ function ProjectBoard({
     <section className="project">
       <div className="project-head">
         <h2>{project.name}</h2>
+        <button
+          className="grill"
+          onClick={onGrill}
+          title="เปิด session role forge (grill-me) ในแท็บใหม่ — ตกผลึกเป็นแถวใหม่ใน slices.md ของโปรเจกต์นี้"
+        >
+          grill slices
+        </button>
         {missing.length > 0 && (
           <span
             className="missing"
