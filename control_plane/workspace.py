@@ -20,6 +20,7 @@ Design constraints (ADR-0029):
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import subprocess
 from dataclasses import dataclass, asdict
@@ -496,20 +497,25 @@ def _slug(text: str) -> str:
     return re.sub(r"[\s_]+", "-", text.strip().lower())
 
 
-def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
-    """role slug → disciplines it owns, from roles.md § แกนความเป็นเจ้าของ.
+def _parse_ownership(path: Path) -> dict[str, dict]:
+    """role slug → {office, disciplines}, from roles.md § แกนความเป็นเจ้าของ.
 
     Same anchored-on-heading approach as `_parse_role_tiers`: the table's
     prose wording is free to change, but its position under this heading is
     the contract. Read once per call rather than cached alongside the tier
     table — this table is small and dispatch already re-reads roles.md.
+
+    Both columns come off one walk because they are one row of one table: the
+    office is the second cell of the same line the disciplines sit on, and
+    reading them apart would be two parsers that can disagree about which rows
+    are rows (ADR-0036 §SD3 leans on the office being right here, not guessed).
     """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
 
-    out: dict[str, list[str]] = {}
+    out: dict[str, dict] = {}
     in_section = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -524,6 +530,7 @@ def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
         if len(cells) < 3:
             continue
         role = _slug(_strip_md(cells[0]))
+        office = _slug(_strip_md(cells[1]))
         disciplines_cell = _strip_md(cells[2])
         if not role or set(role) <= set("-: "):
             continue  # separator row
@@ -532,8 +539,16 @@ def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
         disciplines = [
             _slug(d) for d in disciplines_cell.split("·") if _slug(d) and _slug(d) != "—"
         ]
-        out[role] = disciplines
+        out[role] = {
+            "office": "" if set(office) <= set("-: ") else office,
+            "disciplines": disciplines,
+        }
     return out
+
+
+def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
+    """role slug → disciplines it owns. Thin view over `_parse_ownership`."""
+    return {role: row["disciplines"] for role, row in _parse_ownership(path).items()}
 
 
 def _default_role_for_team(
@@ -605,3 +620,245 @@ def _strip_md(cell: str) -> str:
     out = out.replace("**", "").replace("`", "")
     out = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", out)
     return out.strip()
+
+
+# ── ritual registry (ADR-0036) ───────────────────────────────────────────────
+#
+# The second table the board may dispatch from. ADR-0036 §SD1 replaced the
+# hard-coded answer to "what can this board hand out" ("rows of slices.md") with
+# three criteria; team-os/ways-of-working/rituals.md is the second register that
+# meets them. Everything below reads that file — it is never mirrored here, for
+# the same reason `_scan_dispatch` refuses to mirror roles.md.
+
+_RITUALS_FILE = ("team-os", "ways-of-working", "rituals.md")
+
+# rituals.md pins these three column headers as untranslated English keywords —
+# the Thai prose around them stays free to reword (its own § note, and the rule
+# ADR-0035 §SD1 set for the `role` header of slices.md). So the table is found
+# by its header cells, not by the heading above it: a reworded heading must not
+# turn dispatch off, but a renamed column legitimately does.
+_RITUAL_COLUMNS = ("key", "role", "client")
+
+# Header of the column holding each ritual's definition pointer (runbook + step
+# numbers). Thai, because no English keyword was declared for it — so it is read
+# as best-effort: ADR-0036 §SD3 lists exactly three button-blocking columns, and
+# this is not one of them. A missing pointer degrades the prompt, never the button.
+_RITUAL_READS_COLUMN = "นิยามอยู่ที่"
+
+
+@dataclass
+class Ritual:
+    key: str  # matched against a calendar bar's label (ADR-0036 §SD2)
+    name: str  # the จังหวะ cell, for display
+    role: Optional[str]  # a real dispatch.roles[].role, or None
+    client: str
+    office: Optional[str]
+    assignment: Optional[str]  # <client>/<office>/<role>/<key-slug> — 4 full segments
+    reads: str  # the ritual's own definition pointer, "" when unresolved
+    dispatchable: bool
+    missing: list[str]  # which of key/role/client did not resolve
+
+
+def ritual_registry(repo_root: str, use_cache: bool = True) -> dict:
+    """Daily rituals a calendar bar can dispatch (ADR-0036 §SD1 · §SD3).
+
+    Only rows that declare a `key` are returned: a ritual with no key is not
+    reachable from a bar *and that is correct* — three of the eight have no
+    clock at all, so they are never drawn. Rows that declare a key but cannot
+    resolve a role or a client come back with `dispatchable=False` and the
+    missing fields named, because §SD6 still has to report them as declared
+    but unmapped. There is no default for any field: guessing `internal` for a
+    missing client would file the work under the wrong account permanently.
+    """
+    root = Path(repo_root)
+    path = root.joinpath(*_RITUALS_FILE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {
+            "present": False,
+            "reason": f"ไม่พบ {'/'.join(_RITUALS_FILE)}",
+            "source": "/".join(_RITUALS_FILE),
+            "rituals": [],
+        }
+
+    tables = _markdown_tables(text)
+    found = _ritual_table(tables)
+    if found is None:
+        return {
+            "present": False,
+            "reason": (
+                "ไม่พบตารางที่มีคอลัมน์ "
+                + " · ".join(f"`{c}`" for c in _RITUAL_COLUMNS)
+                + f" ใน {path.name}"
+            ),
+            "source": "/".join(_RITUALS_FILE),
+            "rituals": [],
+        }
+    index, rows = found
+
+    try:
+        payload = workspace_overview(repo_root, use_cache=use_cache)
+    except ValueError:
+        payload = {}
+    dispatch = payload.get("dispatch") or {}
+    roles = dispatch.get("roles", []) if dispatch.get("present") else []
+
+    ownership = _parse_ownership(root / "team-os" / "people" / "roles.md")
+    disciplines = {role: row["disciplines"] for role, row in ownership.items()}
+    definitions = _ritual_definitions(tables)
+
+    out: list[dict] = []
+    for cells in rows:
+        key = _cell(cells, index["key"])
+        if not key or key == "—":
+            continue  # no key = not reachable from a bar, by design (§SD3 note 3)
+        name = _strip_md(cells[0]) if cells else key
+        client = _cell(cells, index["client"])
+        role = _default_role_for_team(_cell(cells, index["role"]), disciplines, roles)
+        office = (ownership.get(_slug(role or ""), {}) or {}).get("office") or ""
+
+        missing = [
+            field
+            for field, value in (("role", role), ("client", client), ("office", office))
+            if not value or value == "—"
+        ]
+        assignment = (
+            f"{client}/{office}/{_slug(role or '')}/{_task_slug(key)}"
+            if not missing
+            else None
+        )
+        out.append(
+            asdict(
+                Ritual(
+                    key=key,
+                    name=name or key,
+                    role=role,
+                    client=client,
+                    office=office or None,
+                    assignment=assignment,
+                    reads=_ritual_reads(definitions, key),
+                    dispatchable=not missing,
+                    missing=missing,
+                )
+            )
+        )
+
+    return {
+        "present": True,
+        "source": "/".join(_RITUALS_FILE),
+        "rituals": out,
+    }
+
+
+def _cell(cells: list[str], i: int) -> str:
+    return _strip_md(cells[i]) if i < len(cells) else ""
+
+
+def _task_slug(text: str) -> str:
+    """`EOD checkpoint` → `eod-checkpoint` — the id's fourth segment.
+
+    Same shape as the slug src/lib/dispatch-prompt.ts builds for a slice, so
+    both registers produce ids `git log --grep '^Assignment:'` can chase.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _markdown_tables(text: str) -> list[tuple[list[str], list[list[str]]]]:
+    """(header cells, body rows) for every pipe table in a document.
+
+    rituals.md holds two tables that matter and several that do not, and which
+    is which is decided by their *columns* — so this hands back all of them and
+    lets the caller choose, rather than anchoring on a heading whose Thai wording
+    the file explicitly reserves the right to reword.
+    """
+    tables: list[tuple[list[str], list[list[str]]]] = []
+    header: Optional[list[str]] = None
+    rows: list[list[str]] = []
+    in_body = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if not in_body and header is not None and set("".join(cells)) <= set("-: "):
+                in_body = True  # separator row — the header above it is real
+                continue
+            if in_body:
+                rows.append(cells)
+            else:
+                header, rows = cells, []
+            continue
+        if in_body and header is not None:
+            tables.append((header, rows))
+        header, rows, in_body = None, [], False
+
+    if in_body and header is not None:
+        tables.append((header, rows))
+    return tables
+
+
+def _ritual_table(
+    tables: list[tuple[list[str], list[list[str]]]],
+) -> Optional[tuple[dict[str, int], list[list[str]]]]:
+    """The first table whose header names all three pinned columns."""
+    for header, rows in tables:
+        index: dict[str, int] = {}
+        for i, cell in enumerate(header):
+            name = _strip_md(cell).strip().lower()
+            if name in _RITUAL_COLUMNS and name not in index:
+                index[name] = i
+        if all(column in index for column in _RITUAL_COLUMNS):
+            return index, rows
+    return None
+
+
+def _ritual_definitions(
+    tables: list[tuple[list[str], list[list[str]]]],
+) -> list[tuple[str, str]]:
+    """(ritual name, definition pointer) from the table carrying that column."""
+    for header, rows in tables:
+        for i, cell in enumerate(header):
+            if _strip_md(cell).strip() == _RITUAL_READS_COLUMN:
+                return [
+                    (_strip_md(r[0]), _reads_pointer(r[i]) if i < len(r) else "")
+                    for r in rows
+                    if r
+                ]
+    return []
+
+
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+
+
+def _reads_pointer(cell: str) -> str:
+    """A definition cell, rewritten so its paths are workspace-root relative.
+
+    The cell is written for a human reading rituals.md, so its links point out
+    of `team-os/ways-of-working/` with `../../`, and some show a bare file name
+    as the link text. A dispatched session opens files from the workspace root,
+    so the *target* is what it needs — resolved against the file the link was
+    written in, and kept alongside whatever prose follows it (the step numbers).
+    """
+
+    def rewrite(m: re.Match) -> str:
+        target = m.group(2).strip()
+        if not target or target.startswith(("http://", "https://", "#")):
+            return m.group(1)
+        return posixpath.normpath(posixpath.join("team-os/ways-of-working", target))
+
+    return _strip_md(_LINK_RE.sub(rewrite, cell))
+
+
+def _ritual_reads(definitions: list[tuple[str, str]], key: str) -> str:
+    """The definition pointer for one ritual, joined on the key — not the name.
+
+    The two tables name the same ritual with different prose (`EOD-prep +
+    forge pre-check` vs `EOD-prep + forge pre-check F1–F5`), so joining on the
+    name would drop a row on a wording change nobody would notice. The key is
+    the identifier both tables carry, and it is matched the same way §SD2
+    matches a bar: as a substring, and ambiguity yields nothing rather than a
+    pick.
+    """
+    hits = [reads for name, reads in definitions if key.lower() in name.lower()]
+    return hits[0] if len(hits) == 1 else ""

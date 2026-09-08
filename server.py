@@ -21,7 +21,8 @@ Endpoints:
     GET  /health                      -> {ok: true}
     GET  /work                        -> work board page (work.html) (ADR-0029)
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
-    GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[]}]} (slices.md S9)
+    GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[], unmapped[]}]}
+                                         (slices.md S9; bars carry their ritual per ADR-0036)
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
@@ -1112,10 +1113,31 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "before/after must be non-negative integers"})
                 return
 
+            # ADR-0036 — the bars carry their ritual, so the board knows which
+            # ones can be pressed. Resolved here rather than in the browser:
+            # the "two keys on one bar = no button" rule and the id it composes
+            # are one decision, and one decision belongs in one tested place.
+            registry = workspace.ritual_registry(repo_root)
             days = daily_calendar.window_schedule(
-                Path(repo_root), center, before=before, after=after
+                Path(repo_root),
+                center,
+                before=before,
+                after=after,
+                rituals=registry["rituals"],
             )
-            self._json(200, {"center": center.isoformat(), "days": days})
+            self._json(
+                200,
+                {
+                    "center": center.isoformat(),
+                    "days": days,
+                    "rituals": {
+                        "present": registry["present"],
+                        "reason": registry.get("reason", ""),
+                        "source": registry["source"],
+                        "declared": len(registry["rituals"]),
+                    },
+                },
+            )
 
         def _timeline(self, session_id: str, repo_root: str):
             """ADR-0017 §SD1 — tool calls for one session, on demand.

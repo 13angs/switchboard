@@ -11,11 +11,17 @@
  * sentences, different job. Splitting them is the whole point of the ADR: one
  * button that meant two things would be worse than the closed door it replaced.
  *
+ * A third shape, `composeRitualPrompt`, dispatches a *ritual* rather than a
+ * slice (ADR-0036 §SD4). It lives in this module rather than a new file because
+ * it is the same spine and the same sentences over a different subject — and
+ * because one file is one place to check that none of the three ever starts
+ * inlining the rules it points at.
+ *
  * Kept in pure functions so they are checkable offline (dispatch-prompt.check.ts)
  * and so the operator previews the exact text that will be typed, not an
  * approximation of it.
  */
-import type { WorkspaceProject, WorkspaceSlice } from "./api";
+import type { Ritual, WorkspaceProject, WorkspaceSlice } from "./api";
 
 export interface DispatchRole {
   role: string;
@@ -53,6 +59,15 @@ const SPINE = [
   'team-os/ways-of-working/definition-of-done.md — "เสร็จ" แปลว่าอะไร',
   "team-os/ways-of-working/stuck-rule.md — ติดแล้วทำยังไง",
   "team-os/decisions/README.md § กฎการเขียน ADR",
+];
+
+/** The three rules short enough to carry rather than cite — everything else in
+ *  team-os hangs off them, and a session that has not read a file yet still has
+ *  to know when to stop. Shared by every prompt shape so they cannot drift. */
+const CENTRAL_RULES = [
+  "**ย้อนกลับได้ → ตัดสินเอง · ย้อนกลับไม่ได้ → เขียน ADR ก่อนลงมือ** (ไม่ใช่เขียนย้อนหลัง)",
+  "ไม่แน่ใจว่าย้อนกลับได้ไหม → ถือว่าย้อนกลับไม่ได้ แล้วถาม",
+  "ติด 3 รอบแล้วไม่ขยับ → หยุด แล้วโพสต์ 3 บรรทัด (ติด: / ลองแล้ว: / ต้องการ:)",
 ];
 
 /**
@@ -129,13 +144,7 @@ export function composePrompt(
   lines.push("");
 
   lines.push("กฎกลางของ team-os:");
-  lines.push(
-    "- **ย้อนกลับได้ → ตัดสินเอง · ย้อนกลับไม่ได้ → เขียน ADR ก่อนลงมือ** (ไม่ใช่เขียนย้อนหลัง)",
-  );
-  lines.push("- ไม่แน่ใจว่าย้อนกลับได้ไหม → ถือว่าย้อนกลับไม่ได้ แล้วถาม");
-  lines.push(
-    "- ติด 3 รอบแล้วไม่ขยับ → หยุด แล้วโพสต์ 3 บรรทัด (ติด: / ลองแล้ว: / ต้องการ:)",
-  );
+  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
   lines.push("");
 
   if (shape === "prepare") {
@@ -159,6 +168,79 @@ export function composePrompt(
   lines.push(`Assignment: ${assignmentId(project, slice)}`);
   lines.push(
     "(ช่อง office เป็น `-` เพราะบอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต)",
+  );
+
+  return lines.join("\n");
+}
+
+
+/**
+ * The prompt a calendar bar opens with (ADR-0036 §SD4).
+ *
+ * A ritual is not a project, so `composePrompt`'s (project, slice, role) shape
+ * does not fit — but the spine, the three central rules and the "pointers, never
+ * the rules" discipline are identical, so this is a sibling here rather than a
+ * second module.
+ *
+ * `ritual.reads` is the register's own definition pointer (a runbook and its
+ * step numbers). It is cited, never unrolled: copying the steps into the prompt
+ * would make the prompt a second copy of the runbook, which is exactly what
+ * `team/README.md § Core principle` forbids.
+ *
+ * The id carries all four segments — the office resolves out of roles.md, so
+ * there is nothing here for the session to fill in — and carries no date: it
+ * names the *ritual*, not today's run of it, so `git log --grep` returns the
+ * whole series (rituals.md § อ่านตารางนี้ยังไง, rule 1).
+ */
+export function composeRitualPrompt(
+  ritual: Ritual,
+  role: DispatchRole,
+  when: { date: string; start: string; end: string },
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `คุณรับบทบาท **${role.role}** ของ team-os (รันบน tier \`${role.tier}\`)`,
+  );
+  lines.push("");
+
+  lines.push(
+    `จังหวะประจำวัน: **${ritual.name}** — ${when.date} · ${when.start}–${when.end}`,
+  );
+  lines.push(
+    "เสร็จเมื่อ: เดินจังหวะนี้จบตามนิยามของมัน แล้วบันทึกผลไว้ที่ที่จังหวะนั้นบันทึก",
+  );
+  lines.push("");
+
+  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
+  if (ritual.reads) {
+    lines.push(`- ${ritual.reads} — นิยามของจังหวะนี้ + ขั้นที่ต้องรัน`);
+  } else {
+    lines.push(
+      "- ⚠️ ทะเบียนไม่ได้ชี้ว่านิยามของจังหวะนี้อยู่ไฟล์ไหน — หาให้เจอก่อนลงมือ อย่าเดาขั้นตอนเอง",
+    );
+  }
+  lines.push(
+    "- team-os/ways-of-working/rituals.md § เจ้าของของแต่ละจังหวะ — แถวของจังหวะนี้",
+  );
+  for (const f of SPINE) lines.push(`- ${f}`);
+  lines.push("");
+
+  lines.push("กฎกลางของ team-os:");
+  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
+  lines.push("");
+
+  // The one rule this surface can break by accident: a ritual session works
+  // inside meta/daily/*, where "record what happened" and "change what the day
+  // committed to" look like the same edit. Cited, not unrolled.
+  lines.push(
+    "⛔ **แผนของวันเป็นข้อผูกพัน ไม่ใช่กระดาษทด** — บันทึกสิ่งที่เกิดขึ้นแล้วได้เสมอ · แต่แถวใน `§ ⏱️ ตารางเวลา` · การจัดสรรของ Focus · `plan.md` เปลี่ยนไม่ได้ถ้าไม่มีคำอนุมัติของเจ้าของสำหรับการเปลี่ยนนั้น (CLAUDE.md § Always-On Safety Net)",
+  );
+  lines.push("");
+
+  lines.push(`Assignment: ${ritual.assignment}`);
+  lines.push(
+    "(id ระบุ *จังหวะ* ไม่ใช่รอบของวันนี้ — ห้ามต่อท้ายวันที่ ไม่งั้นตัดซีรีส์ของตัวเองใน `git log --grep`)",
   );
 
   return lines.join("\n");

@@ -40,37 +40,84 @@ class ScheduleBlock:
     label: str
     domain: str
     minutes: Optional[int]
+    # ADR-0036 §SD2 — the ritual this bar carries, or None when the label names
+    # no declared key. `ritual_conflict` names the keys when it matched more
+    # than one: two keys on one bar means the board has no way to choose, so it
+    # offers nothing rather than picking (fail dark, same direction as
+    # ADR-0030 §SD1).
+    ritual: Optional[dict] = None
+    ritual_conflict: Optional[list] = None
 
 
 def today_bangkok() -> Date:
     return datetime.now(_OWNER_TZ).date()
 
 
-def window_schedule(root: Path, center: Date, before: int = 2, after: int = 2) -> list[dict]:
+def window_schedule(
+    root: Path,
+    center: Date,
+    before: int = 2,
+    after: int = 2,
+    rituals: Optional[list[dict]] = None,
+) -> list[dict]:
     """One entry per day from `center - before` to `center + after`, oldest first.
 
-    Each entry: {date, present, blocks}. `present=False` means no day file
-    exists yet (future day, or one never written) — the caller draws it as an
-    empty bar, not an error.
+    Each entry: {date, present, blocks, unmapped}. `present=False` means no day
+    file exists yet (future day, or one never written) — the caller draws it as
+    an empty bar, not an error.
+
+    `rituals` is the registry from workspace.ritual_registry(); passing it turns
+    bars into dispatchable ones (ADR-0036) and fills `unmapped`. Passed in
+    rather than read here so this module keeps reading exactly one file family
+    — the day plan — and the register's own reader stays the single place role,
+    client and office are resolved.
     """
     return [
-        _day_schedule(root, center + timedelta(days=offset))
+        _day_schedule(root, center + timedelta(days=offset), rituals or [])
         for offset in range(-before, after + 1)
     ]
 
 
-def _day_schedule(root: Path, day: Date) -> dict:
+def _day_schedule(root: Path, day: Date, rituals: list[dict]) -> dict:
     path = root / "meta" / "daily" / f"{day.isoformat()}.md"
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return {"date": day.isoformat(), "present": False, "blocks": []}
+        return {"date": day.isoformat(), "present": False, "blocks": [], "unmapped": []}
 
+    blocks = [asdict(b) for b in _parse_schedule_table(text)]
+    for block in blocks:
+        _attach_ritual(block, rituals)
+
+    # ADR-0036 §SD6 — a key that matched nothing today is the failure shape of
+    # risks.md S-08: a gate nobody fills is as quiet as no gate at all. So the
+    # silence gets a line under the agenda instead of just no button. It reads
+    # the *plan* only: "not in today's plan", never "not run yet" (that half is
+    # slices.md S15).
+    matched = {b["ritual"]["key"] for b in blocks if b.get("ritual")}
+    matched |= {k for b in blocks for k in (b.get("ritual_conflict") or [])}
     return {
         "date": day.isoformat(),
         "present": True,
-        "blocks": [asdict(b) for b in _parse_schedule_table(text)],
+        "blocks": blocks,
+        "unmapped": [r for r in rituals if r["key"] not in matched],
     }
+
+
+def _attach_ritual(block: dict, rituals: list[dict]) -> None:
+    """Match one bar to at most one ritual (ADR-0036 §SD2).
+
+    By key-as-substring of the label, case-insensitively — not by time. The
+    times in rituals.md are defaults, not identity (measured 09-06: morning
+    reconcile-delta is registered 08:30 and ran 08:00), and three of the eight
+    rituals have no clock at all.
+    """
+    label = block["label"].lower()
+    hits = [r for r in rituals if r["key"].lower() in label]
+    if len(hits) == 1:
+        block["ritual"] = hits[0]
+    elif len(hits) > 1:
+        block["ritual_conflict"] = [r["key"] for r in hits]
 
 
 def _parse_schedule_table(text: str) -> list[ScheduleBlock]:
