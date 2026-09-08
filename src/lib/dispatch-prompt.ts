@@ -17,6 +17,12 @@
  * because one file is one place to check that none of the three ever starts
  * inlining the rules it points at.
  *
+ * A fourth shape, `composeGrillPrompt` (ADR-0037), dispatches a *grill* — a
+ * project with no settled row yet. It differs from the other three in the one
+ * way ADR-0037 §SD1 spells out: its role is the literal string `forge`, never
+ * resolved through the 7-role table, because the row that would carry a role
+ * does not exist until the grill session writes it.
+ *
  * Kept in pure functions so they are checkable offline (dispatch-prompt.check.ts)
  * and so the operator previews the exact text that will be typed, not an
  * approximation of it.
@@ -241,6 +247,91 @@ export function composeRitualPrompt(
   lines.push(`Assignment: ${ritual.assignment}`);
   lines.push(
     "(id ระบุ *จังหวะ* ไม่ใช่รอบของวันนี้ — ห้ามต่อท้ายวันที่ ไม่งั้นตัดซีรีส์ของตัวเองใน `git log --grep`)",
+  );
+
+  return lines.join("\n");
+}
+
+/**
+ * The prompt a "grill slices" button opens with (ADR-0037 §SD1–§SD5).
+ *
+ * Grill is not "act" on an existing row and not "prepare" a decision on one —
+ * it runs *before* a row exists, to produce one. That is why `role` never goes
+ * through `_default_role_for_team()` on the caller's side either: `forge` is
+ * written straight into the prompt and into the `DispatchRole` the caller
+ * builds from the picker (ADR-0037 §SD1), not resolved from `dispatch.roles`,
+ * because there is no card yet to resolve a role from.
+ *
+ * `role.tier`/`role.model`/`role.effort` come from the two dropdowns ADR-0037
+ * §SD2 puts in the dialog instead of a role list — the caller is responsible
+ * for defaulting them to heavy/high and reading the model id off the same
+ * `dispatch.tiers` map the 7-role table uses, so this function stays as
+ * ignorant of *where the tier came from* as `composePrompt` already is.
+ */
+export function composeGrillPrompt(
+  project: WorkspaceProject,
+  role: DispatchRole,
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `คุณรับบทบาท **${role.role}** ของ team-os (รันบน tier \`${role.tier}\`)`,
+  );
+  lines.push("");
+
+  lines.push(
+    `งาน: **กริล** เจ้าของเรื่องที่ยังไม่ตกผลึกเป็นแถว ให้กลายเป็นแถวใหม่ใน **projects/${project.name}/slices.md**`,
+  );
+  lines.push(
+    "เสร็จเมื่อ: สัมภาษณ์จนตกผลึกครบ (grill-me) แล้วเปิด PR ที่แก้เฉพาะไฟล์นั้น — **ไม่ implement เอง** ในเซสชันนี้",
+  );
+  lines.push("");
+
+  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
+  lines.push(
+    `- projects/${project.name}/slices.md — โครง + กฎการเขียนแถวของไฟล์นี้`,
+  );
+  if (project.has.scope)
+    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
+  if (project.has.risks)
+    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
+  lines.push(
+    "- docs/sops/sop-forge-planning.md — ขั้นตอน elicit → structure → grill → finalize",
+  );
+  lines.push("- tools/grill-me/grill-ruleset.md — วิธี grill-me");
+  lines.push(
+    "- docs/sops/sop-work-ownership.md § Team-Slug-Approved — วิธีเขียน `Assignment:`/`Team-Slug-Approved:` ของเซสชันนี้",
+  );
+  for (const s of SPINE) lines.push(`- ${s}`);
+  lines.push("");
+
+  lines.push("กฎกลางของ team-os:");
+  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
+  lines.push("");
+
+  lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
+  lines.push(
+    `- **แก้ได้เฉพาะ \`slices.md\` ของ ${project.name}** — ห้ามแตะโค้ดหรือไฟล์อื่นในเซสชันนี้`,
+  );
+  lines.push(
+    "- **ไม่ implement เอง** — ผลลัพธ์ของเซสชันนี้คือแถวที่ตกผลึกแล้ว ไม่ใช่โค้ด",
+  );
+  lines.push(
+    "- **ไม่มีทางลัด** — เปิด worktree → PR → หยุดรอเจ้าของไฟเขียว เหมือนงานเขียนไฟล์อื่นทุกเส้นทาง",
+  );
+  lines.push("");
+
+  const client = project.client || "internal";
+  const today = new Date().toISOString().slice(0, 10);
+  lines.push(
+    `Assignment: ${client}/-/${role.role}/<task-slug-ที่ตกผลึกได้ตอนจบ>`,
+  );
+  lines.push(
+    "(ช่อง office เป็น `-` เพราะบอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต · ช่อง task-slug ยังไม่มีเพราะแถวยังไม่ตกผลึก — ตั้งเองตอนจบ ห้ามเว้นว่าง)",
+  );
+  lines.push(`Team-Slug-Approved: Don ${today} — grill session, no role owns elicitation yet`);
+  lines.push(
+    "(การกดปุ่ม grill ของเจ้าของคือ green light รายครั้งสำหรับ trailer นี้ — ADR-0037 §SD1)",
   );
 
   return lines.join("\n");

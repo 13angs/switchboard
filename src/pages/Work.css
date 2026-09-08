@@ -186,6 +186,23 @@
   color: var(--blocked);
   font-family: var(--mono);
 }
+/* ADR-0037 — every project card gets this, not only ones without slices.md:
+   grill produces a *row*, so a project already mid-flight can still use it. */
+.project-head .grill {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.project-head .grill:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
 
 /* ── columns ── */
 .cols {
@@ -434,6 +451,43 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
+}
+.dlg-grill {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-grill b {
+  color: var(--fg);
+}
+/* ADR-0037 §SD2 — the two dropdowns that replace the role-list picker when
+   there is no row yet to resolve a role from. */
+.dlg-tier-picker {
+  display: flex;
+  gap: 14px;
+}
+.dlg-tier-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+.dlg-tier-picker select {
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: var(--mono);
 }
 .dlg-prepare b {
   color: var(--fg);

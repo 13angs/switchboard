@@ -2,6 +2,18 @@ import { useState, useMemo, type ReactNode } from 'react';
 import { startSession, type WorkspaceDispatch } from '../lib/api';
 import type { DispatchRole } from '../lib/dispatch-prompt';
 
+/** ADR-0037 §SD2 — grill has no row to resolve a role→tier pair from, so its
+ *  box is two dropdowns (tier, effort) instead of the usual role list. `role`
+ *  is the literal string this dialog sends, never looked up in `dispatch.roles`. */
+export interface TierEffortPicker {
+  role: string;
+  /** tier name → model id, the same map the 7-role table reads
+   *  (`dispatch.tiers`). */
+  tiers: Record<string, string>;
+  defaultTier: string;
+  defaultEffort: string;
+}
+
 interface Props {
   /** The word this dialog and its send button wear — `dispatchLabel(shape)`. */
   action: string;
@@ -14,6 +26,13 @@ interface Props {
    *  a ritual's id embeds its role and office, so a different role would run
    *  under an id that names someone else (ADR-0036 §SD3). */
   fixedRole?: { role: string; why: string } | null;
+  /** Set only for the grill button (ADR-0037 §SD2) — replaces the role-list
+   *  picker with tier/effort dropdowns. Mutually exclusive with `fixedRole`. */
+  tierPicker?: TierEffortPicker | null;
+  /** ADR-0037 §SD3 — grill opens a new tab and leaves `/work` where it is;
+   *  every other shape still replaces the current tab (ADR-0034/S13). Default
+   *  `"replace"`. */
+  openMode?: "replace" | "new-tab";
   /** An extra paragraph above the prompt, for a shape that needs to say what
    *  it will not do. */
   notice?: ReactNode;
@@ -40,6 +59,8 @@ export function DispatchDialog({
   dispatch,
   preferredRole,
   fixedRole = null,
+  tierPicker = null,
+  openMode = 'replace',
   notice,
   compose,
   onClose,
@@ -50,7 +71,26 @@ export function DispatchDialog({
   const roles = fixedRole ? all.filter((r) => r.role === fixedRole.role) : all;
   const defaultRole = roles.find((r) => r.role === preferredRole);
   const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
-  const role: DispatchRole | undefined = roles.find((r) => r.role === roleName);
+
+  // ADR-0037 §SD2 — grill's own two-dropdown picker, independent of the
+  // role-list state above. Both live in `useState` scoped to this component
+  // instance, so a fresh dialog open always starts back at the defaults
+  // (§SD2(ก): the override never sticks past the click that made it).
+  const tierNames = tierPicker ? Object.keys(tierPicker.tiers) : [];
+  const [tier, setTier] = useState(tierPicker?.defaultTier ?? '');
+  const [effort, setEffort] = useState(tierPicker?.defaultEffort ?? '');
+
+  const role: DispatchRole | undefined = tierPicker
+    ? tier in tierPicker.tiers
+      ? {
+          role: tierPicker.role,
+          tier,
+          model: tierPicker.tiers[tier],
+          // roles.md § โมเดลต่อ role: light rejects --effort outright.
+          effort: tier === 'light' ? null : effort,
+        }
+      : undefined
+    : roles.find((r) => r.role === roleName);
 
   const composed = useMemo(() => (role ? compose(role) : ''), [role, compose]);
   const [prompt, setPrompt] = useState<string | null>(null);
@@ -80,7 +120,17 @@ export function DispatchDialog({
       } else if (res.attach_key) {
         params.set('attach_key', res.attach_key);
       }
-      window.location.href = `/agent?${params.toString()}`;
+      const url = `/agent?${params.toString()}`;
+      if (openMode === 'new-tab') {
+        // ADR-0037 §SD3 — grill leaves /work in place; the owner needs the
+        // board and the grill room open at once, unlike every other shape's
+        // fire-and-forget dispatch (ADR-0034/S13).
+        window.open(url, '_blank');
+        setSending(false);
+        onClose();
+      } else {
+        window.location.href = url;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'สั่งงานไม่สำเร็จ');
       setSending(false);
@@ -118,22 +168,64 @@ export function DispatchDialog({
           </div>
         ) : (
           <>
-            <div className="dlg-roles">
-              {roles.map((r) => (
-                <button
-                  key={r.role}
-                  className={`role${r.role === roleName ? ' on' : ''}`}
-                  disabled={!!fixedRole}
-                  onClick={() => {
-                    setRoleName(r.role);
-                    setPrompt(null); // re-compose for the new role
-                  }}
-                >
-                  <span className="rname">{r.role}</span>
-                  <span className={`rtier t-${r.tier}`}>{r.tier}</span>
-                </button>
-              ))}
-            </div>
+            {tierPicker ? (
+              // ADR-0037 §SD2 — grill has no row to resolve a role from yet,
+              // so the operator picks tier + effort directly instead of a
+              // role list. Resets to the defaults every time this dialog
+              // mounts fresh — nothing here is written back to roles.md.
+              <div className="dlg-tier-picker">
+                <label>
+                  model
+                  <select
+                    value={tier}
+                    onChange={(e) => {
+                      setTier(e.target.value);
+                      setPrompt(null);
+                    }}
+                  >
+                    {tierNames.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  effort
+                  <select
+                    value={effort}
+                    disabled={tier === 'light'}
+                    onChange={(e) => {
+                      setEffort(e.target.value);
+                      setPrompt(null);
+                    }}
+                  >
+                    {['low', 'medium', 'high', 'xhigh'].map((ef) => (
+                      <option key={ef} value={ef}>
+                        {ef}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <div className="dlg-roles">
+                {roles.map((r) => (
+                  <button
+                    key={r.role}
+                    className={`role${r.role === roleName ? ' on' : ''}`}
+                    disabled={!!fixedRole}
+                    onClick={() => {
+                      setRoleName(r.role);
+                      setPrompt(null); // re-compose for the new role
+                    }}
+                  >
+                    <span className="rname">{r.role}</span>
+                    <span className={`rtier t-${r.tier}`}>{r.tier}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {fixedRole && <p className="dlg-fixed-role">{fixedRole.why}</p>}
 
@@ -147,8 +239,10 @@ export function DispatchDialog({
                   </>
                 )}
                 <span className="src">
-                  · แผนที่มาจาก {dispatch.source.roles} +{' '}
-                  {dispatch.source.tiers}
+                  ·{' '}
+                  {tierPicker
+                    ? `แผนที่มาจาก ${dispatch.source.tiers}`
+                    : `แผนที่มาจาก ${dispatch.source.roles} + ${dispatch.source.tiers}`}
                 </span>
               </p>
             )}
@@ -170,7 +264,9 @@ export function DispatchDialog({
 
             <div className="dlg-foot">
               <span className="dlg-note">
-                เปิด session ใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ ·{' '}
+                {openMode === 'new-tab'
+                  ? 'เปิดแท็บใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ — แท็บ /work นี้ยังอยู่ที่เดิม · '
+                  : 'เปิด session ใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ · '}
                 <b>คุณเป็นคนกด Enter</b>
               </span>
               <button className="dlg-cancel" onClick={onClose}>
