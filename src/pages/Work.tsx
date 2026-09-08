@@ -235,6 +235,11 @@ function GrillDialog({
   );
 }
 
+/** A title or note past this many characters gets clamped by CSS, so the
+ *  [อ่านเต็ม] button only needs to know the character count — never the
+ *  rendered DOM height (slices.md S21 §(ง)). */
+const READ_MORE_THRESHOLD = 100;
+
 function ProjectBoard({
   project,
   dispatch,
@@ -246,6 +251,7 @@ function ProjectBoard({
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
 }) {
+  const [reading, setReading] = useState<WorkspaceSlice | null>(null);
   const missing = (['scope', 'risks', 'hld'] as const).filter(
     (k) => !project.has[k],
   );
@@ -280,40 +286,60 @@ function ProjectBoard({
                 {col.label}
                 <span className="count">{items.length}</span>
               </div>
-              {items.map((s, i) => (
-                <article className={`card c-${col.key}`} key={`${s.id}-${i}`}>
-                  <span className="id">
-                    {s.id !== '—' ? s.id : ''} {s.day && <em>· {s.day}</em>}
-                  </span>
-                  <span className="title">{s.title}</span>
-                  {s.note && <span className="note">{s.note}</span>}
-                  {DISPATCHABLE.has(col.key) && (
-                    <>
-                      <button
-                        className={`dispatch s-${shape}`}
-                        onClick={() => onDispatch(s)}
-                        title={
-                          !dispatch.present
-                            ? 'อ่านแผนที่ role → model ไม่ได้ — กดเพื่อดูเหตุผล'
-                            : shape === 'prepare'
-                              ? 'เลือก role แล้วเปิด session ที่เตรียมเรื่องให้คุณเคาะ'
-                              : 'เลือก role แล้วเปิด session ที่ปักหมุด tier ไว้'
-                        }
-                      >
-                        {dispatchLabel(shape)}
-                      </button>
-                      {/* Printed, never a `title=`: the owner reads this board
-                          on a tablet and hover does not exist there — the
-                          lesson S9 paid for once already (ADR-0036 §SD5(ค)). */}
-                      {shape === 'prepare' && (
-                        <span className="dispatch-why">
-                          ปุ่มนี้ไม่ลงมือแทนคุณ — ได้ตัวเลือกกับข้อเสนอ แล้วคุณเคาะ
-                        </span>
-                      )}
-                    </>
-                  )}
-                </article>
-              ))}
+              {items.map((s, i) => {
+                const long =
+                  s.title.length >= READ_MORE_THRESHOLD ||
+                  (s.note?.length ?? 0) >= READ_MORE_THRESHOLD;
+                const dispatchable = DISPATCHABLE.has(col.key);
+                return (
+                  <article className={`card c-${col.key}`} key={`${s.id}-${i}`}>
+                    <span className="id">
+                      {s.id !== '—' ? s.id : ''} {s.day && <em>· {s.day}</em>}
+                    </span>
+                    <span className="title">{s.title}</span>
+                    {s.note && <span className="note">{s.note}</span>}
+                    {(long || dispatchable) && (
+                      <div className="card-foot">
+                        {long && (
+                          <button
+                            className="read-more"
+                            onClick={() => setReading(s)}
+                          >
+                            อ่านเต็ม
+                          </button>
+                        )}
+                        {dispatchable && (
+                          <>
+                            <button
+                              className={`dispatch s-${shape}`}
+                              onClick={() => onDispatch(s)}
+                              title={
+                                !dispatch.present
+                                  ? 'อ่านแผนที่ role → model ไม่ได้ — กดเพื่อดูเหตุผล'
+                                  : shape === 'prepare'
+                                    ? 'เลือก role แล้วเปิด session ที่เตรียมเรื่องให้คุณเคาะ'
+                                    : 'เลือก role แล้วเปิด session ที่ปักหมุด tier ไว้'
+                              }
+                            >
+                              {dispatchLabel(shape)}
+                            </button>
+                            {/* Printed, never a `title=`: the owner reads this
+                                board on a tablet and hover does not exist
+                                there — the lesson S9 paid for once already
+                                (ADR-0036 §SD5(ค)). */}
+                            {shape === 'prepare' && (
+                              <span className="dispatch-why">
+                                ปุ่มนี้ไม่ลงมือแทนคุณ — ได้ตัวเลือกกับข้อเสนอ
+                                แล้วคุณเคาะ
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
               {items.length === 0 && <div className="col-empty">—</div>}
             </div>
           );
@@ -325,6 +351,39 @@ function ProjectBoard({
           แถวเป็นวันที่ไม่มีงาน — ไม่แสดงเป็นคอลัมน์
         </p>
       )}
+      {reading && <ReadDialog slice={reading} onClose={() => setReading(null)} />}
     </section>
+  );
+}
+
+/** Read-only expansion of one card's clamped text (slices.md S21 §(ข)) — the
+ *  same `.dlg-backdrop`/`.dlg` frame `DispatchDialog` uses, but with no role
+ *  picker and nothing to send: closing is the only action it offers. */
+function ReadDialog({
+  slice,
+  onClose,
+}: {
+  slice: WorkspaceSlice;
+  onClose: () => void;
+}) {
+  return (
+    <div className="dlg-backdrop" onClick={onClose}>
+      <div
+        className="dlg"
+        role="dialog"
+        aria-modal="true"
+        aria-label={slice.title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="dlg-head">
+          <h3>{slice.id !== '—' ? slice.id : slice.title}</h3>
+          <button className="dlg-x" onClick={onClose} aria-label="ปิด">
+            ✕
+          </button>
+        </div>
+        <p className="dlg-read-title">{slice.title}</p>
+        {slice.note && <p className="dlg-read-note">{slice.note}</p>}
+      </div>
+    </div>
   );
 }
