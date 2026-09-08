@@ -12,6 +12,11 @@ import {
   promptShapeFor,
   dispatchLabel,
 } from '../lib/dispatch-prompt';
+import {
+  readProjectParam,
+  withProjectParam,
+  resolveProjectSelection,
+} from '../lib/project-filter';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import './Work.css';
@@ -49,6 +54,24 @@ export function WorkPage() {
     slice: WorkspaceSlice;
   } | null>(null);
   const [grilling, setGrilling] = useState<WorkspaceProject | null>(null);
+  // The board shows one project at a time, and which one lives in the URL so a
+  // tab can be pinned to it (slices.md S20 §ก–§ข). Read once: nothing else
+  // rewrites the query string, and the picker below keeps both in step.
+  const [project, setProject] = useState<string | null>(() =>
+    readProjectParam(window.location.search),
+  );
+
+  const pickProject = useCallback((name: string | null) => {
+    setProject(name);
+    const { pathname, search, hash } = window.location;
+    window.history.replaceState(
+      null,
+      '',
+      `${pathname}${withProjectParam(search, name)}${hash}`,
+    );
+  }, []);
+
+  const selection = resolveProjectSelection(data?.projects ?? [], project);
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -131,17 +154,30 @@ export function WorkPage() {
         </div>
       )}
 
+      {/* Above the picker on purpose: the calendar is the day, not a project
+          (slices.md S20 §ง). Filtering it would hide blocks the owner still
+          owes time to just because they belong to another piece of work. */}
       <DayCalendar dispatch={data?.dispatch ?? null} />
 
-      {data?.projects.map((p) => (
-        <ProjectBoard
-          key={p.name}
-          project={p}
-          dispatch={data.dispatch}
-          onDispatch={(slice) => setPicked({ project: p, slice })}
-          onGrill={() => setGrilling(p)}
+      {data && data.projects.length > 0 && (
+        <ProjectPicker
+          projects={data.projects}
+          value={selection.value}
+          unknown={selection.unknown}
+          onPick={pickProject}
         />
-      ))}
+      )}
+
+      {data &&
+        selection.shown.map((p) => (
+          <ProjectBoard
+            key={p.name}
+            project={p}
+            dispatch={data.dispatch}
+            onDispatch={(slice) => setPicked({ project: p, slice })}
+            onGrill={() => setGrilling(p)}
+          />
+        ))}
 
       {picked && data && <SliceDialog {...picked} dispatch={data.dispatch} onClose={() => setPicked(null)} />}
       {grilling && data && (
@@ -150,6 +186,64 @@ export function WorkPage() {
           dispatch={data.dispatch}
           onClose={() => setGrilling(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One control, one line, whatever the project count (slices.md S20 §ก).
+ *
+ * A tab strip taps better, but its cost grows with exactly the number this
+ * slice exists because it is growing — and the header already carries a tab
+ * strip for Sessions/Work/Analytics, so a second one directly beneath it would
+ * read as navigation rather than a filter. A native `<select>` stays one line
+ * at 5 projects and at 31, and on a tablet it opens the platform's own
+ * full-screen list, whose rows are bigger than any chip row built here.
+ *
+ * *ทั้งหมด* stays, and stays the default (§ค): with no `?project=` the board
+ * must not decide for the reader which project matters, and a first-project
+ * default would hide work behind a choice nobody made.
+ */
+function ProjectPicker({
+  projects,
+  value,
+  unknown,
+  onPick,
+}: {
+  projects: WorkspaceProject[];
+  value: string;
+  unknown: string | null;
+  onPick: (name: string | null) => void;
+}) {
+  return (
+    <div className="project-picker">
+      <div className="picker-row">
+        <label htmlFor="project-pick">โปรเจกต์</label>
+        <select
+          id="project-pick"
+          value={value}
+          onChange={(e) => onPick(e.target.value || null)}
+        >
+          <option value="">ทั้งหมด · {projects.length} โปรเจกต์</option>
+          {projects.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name} · {p.slices.length} แถว
+            </option>
+          ))}
+        </select>
+      </div>
+      {/* Printed, never a `title=` — hover does not exist on the tablet this
+          board is read on (ADR-0036 §SD5(ค), the lesson S9 paid for). */}
+      <p className="picker-scope">
+        กรอง<b>เฉพาะการ์ดของ <code>slices.md</code></b> — ปฏิทินด้านบนเป็นของข้ามโปรเจกต์
+        และไม่ถูกกรอง
+      </p>
+      {unknown && (
+        <p className="picker-unknown">
+          ไม่มีโปรเจกต์ <code>{unknown}</code> บนบอร์ดนี้ — แสดงทั้งหมดแทน ·
+          บอร์ดอ่านเฉพาะโปรเจกต์ที่มี <code>slices.md</code>
+        </p>
       )}
     </div>
   );

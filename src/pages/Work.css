@@ -163,6 +163,60 @@
   color: var(--fg-dim);
 }
 
+/* ── project picker (slices.md S20) ── */
+.project-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.project-picker .picker-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.project-picker label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+/* 16px keeps a tablet from zooming the page on focus, and the 40px box keeps
+   the tap target above the finger-size floor the whole slice is about. */
+.project-picker select {
+  flex: 1 1 auto;
+  max-width: 26rem;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 16px;
+  font-family: var(--mono);
+}
+.project-picker .picker-scope {
+  margin: 0;
+  font-size: 11px;
+  color: var(--faint);
+}
+.project-picker .picker-scope b {
+  color: var(--muted);
+  font-weight: 600;
+}
+.project-picker code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.project-picker .picker-unknown {
+  margin: 0;
+  font-size: 12px;
+  color: var(--awaiting);
+}
+
 /* ── project ── */
 .project {
   padding: 14px;
