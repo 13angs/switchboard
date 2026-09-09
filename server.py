@@ -281,8 +281,21 @@ def _read_json_body(
 
 
 def _chat_message_payload(text: str, harness_name: str) -> bytes:
-    """Encode chat input as the submit key sequence expected by the harness."""
-    submit = "\r" if harness_name == "codex" else "\n"
+    """Encode chat input as the submit key sequence expected by the harness.
+
+    `claude` and `codex` both run raw-mode terminal UIs, and a raw-mode tty
+    delivers the physical Enter key exactly as sent — no ICRNL/INLCR
+    translation — so both need `\\r` (carriage return), which is what a real
+    terminal emulator (and this repo's own `Agent.tsx` WS client) actually
+    transmits for Enter. This was `\\n` for `claude` until `S24`'s live
+    reproduction against the real binary proved it never submits: `\\n`
+    written to the PTY sits in the input box, unread as "Enter", for as long
+    as anything keeps retrying it. Every existing unit test stubs the harness
+    binary with `cat` (`ORCH_CLAUDE_BIN=cat` in the `srv` fixture), so nothing
+    here has ever checked the byte against the real TUI — `agy` (a different
+    CLI entirely) keeps its prior `\\n` default rather than guessing.
+    """
+    submit = "\n" if harness_name == "agy" else "\r"
     return (text + submit).encode("utf-8")
 
 

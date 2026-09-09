@@ -547,8 +547,22 @@ def test_prompt_is_typed_without_a_submit_key(srv):
 def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
     """`_message` must keep sending. If these two ever converge, one of the two
     behaviours has been broken silently."""
-    assert srv._chat_message_payload("hi", "claude").endswith(b"\n")
+    assert srv._chat_message_payload("hi", "claude").endswith(b"\r")
     assert srv._chat_message_payload("hi", "codex").endswith(b"\r")
+
+
+def test_claude_and_codex_submit_with_carriage_return_not_linefeed(srv):
+    """Regression guard for the byte itself, not just "does it end in
+    something". Both run raw-mode terminal UIs, which deliver Enter exactly
+    as sent — `\\r`, what a real terminal transmits for Enter — with no
+    ICRNL/INLCR translation. `claude` used `\\n` here until a live
+    reproduction against the real binary (S24) proved it never submits:
+    `_type_prompt`/`_submit_typed_prompt` could retry a wrong byte forever
+    and never see a `session_id`. `agy` is a different CLI with no such
+    evidence either way, so it keeps its prior default rather than guessing."""
+    assert srv._chat_message_payload("x", "claude") == b"x\r"
+    assert srv._chat_message_payload("x", "codex") == b"x\r"
+    assert srv._chat_message_payload("x", "agy") == b"x\n"
 
 
 def test_typing_into_a_dead_pty_reports_instead_of_raising(srv):
