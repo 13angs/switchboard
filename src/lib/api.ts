@@ -215,7 +215,22 @@ export interface WorkspaceProject {
   /** The `dispatch.roles[].role` this project's `team:` resolves to, or null
    *  when it does not match a known role or discipline (ADR-0033). */
   default_role: string | null;
-  has: { scope: boolean; risks: boolean; hld: boolean };
+  /** One key per slot team-os declares, in declared order (ADR-0040 §SD4).
+   *  `scope`/`risks`/`hld` are always among them — those three are also the
+   *  fallback set when the declaration cannot be read. */
+  has: Record<string, boolean>;
+}
+
+/** The files team-os says a project should carry, read from
+ *  `team-os/projects/README.md` (ADR-0040 §SD2 · §SD4). `source: "fallback"`
+ *  means that table could not be read and `has` is the original three. */
+export interface WorkspaceSlots {
+  source: 'declared' | 'fallback';
+  reason: string;
+  slots: { key: string; kind: 'file' | 'dir'; where: string }[];
+  /** Template rows that name no file, so the board does not check them —
+   *  reported rather than dropped (§SD3). */
+  unmapped: string[];
 }
 
 /** Role → tier → model, read from the workspace (ADR-0030 §SD1). Never held here. */
@@ -233,6 +248,7 @@ export interface WorkspaceResponse {
   repo: string;
   head: string;
   stale_by: string;
+  slots: WorkspaceSlots;
   projects: WorkspaceProject[];
   totals: {
     projects_with_slices: number;
@@ -361,6 +377,8 @@ export type RoleActivityResponse =
       repo: string;
       source: string;
       window: { days: number; since: string; tz: string };
+      /** The project the numbers were scoped to, or null for the whole workspace. */
+      project: string | null;
       roles: RoleActivityRow[];
       repos: RoleActivityRepo[];
       unresolved: {
@@ -371,8 +389,15 @@ export type RoleActivityResponse =
       totals: { commits: number; with_assignment: number };
     };
 
-export async function fetchRoleActivity(days: number): Promise<RoleActivityResponse> {
-  const res = await fetch(`${BASE}/roles/activity?days=${days}`);
+/** `project` scopes the count by path (ADR-0040 §SD5) — an unknown name is a
+ *  400, never an empty panel that would read like "this role shipped nothing". */
+export async function fetchRoleActivity(
+  days: number,
+  project?: string,
+): Promise<RoleActivityResponse> {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (project) qs.set('project', project);
+  const res = await fetch(`${BASE}/roles/activity?${qs.toString()}`);
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error || `roles/activity ${res.status}`);
   return data as RoleActivityResponse;

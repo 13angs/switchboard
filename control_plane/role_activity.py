@@ -62,21 +62,31 @@ DEFAULT_DAYS = 14
 MAX_DAYS = 365
 
 
-def role_activity(repo_root: str, days: int = DEFAULT_DAYS) -> dict:
+def role_activity(
+    repo_root: str, days: int = DEFAULT_DAYS, project: Optional[str] = None
+) -> dict:
     """Commits shipped per role in the last `days`, paired with rows still open.
 
     Args:
         repo_root: absolute workspace root
         days: window length in owner-timezone days, inclusive of today
+        project: scope the count to one project (ADR-0040 §SD5). `Assignment:`
+            has no project segment, so the scope is by *path* — commits in the
+            workspace repo that touch `projects/<name>/`, plus every commit of
+            that project's own code repos. A commit touching two projects counts
+            for both; there is nothing in the id that could split it.
 
     Raises:
-        ValueError: repo_root is not a directory, or `days` is out of range.
+        ValueError: repo_root is not a directory, `days` is out of range, or
+            `project` names no project the board can see.
     """
     root = Path(repo_root)
     if not root.is_dir():
         raise ValueError(f"repo_root is not a directory: {repo_root}")
     if not 1 <= days <= MAX_DAYS:
         raise ValueError(f"days must be between 1 and {MAX_DAYS}")
+    if project is not None and not _is_project(root, project):
+        raise ValueError(f"unknown project: {project}")
 
     roles_file = root / "team-os" / "people" / "roles.md"
     ownership = workspace._parse_ownership(roles_file)
@@ -92,8 +102,8 @@ def role_activity(repo_root: str, days: int = DEFAULT_DAYS) -> dict:
         }
 
     since = _since_date(days)
-    scanned, per_role, unresolved = _scan_repos(root, ownership, since)
-    open_rows, open_unassigned = _open_rows(root, ownership)
+    scanned, per_role, unresolved = _scan_repos(root, ownership, since, project)
+    open_rows, open_unassigned = _open_rows(root, ownership, project)
 
     roles = []
     for slug, row in ownership.items():
@@ -122,6 +132,7 @@ def role_activity(repo_root: str, days: int = DEFAULT_DAYS) -> dict:
         "repo": str(root),
         "source": "team-os/people/roles.md",
         "window": {"days": days, "since": since, "tz": _OWNER_OFFSET},
+        "project": project,
         "roles": roles,
         "repos": scanned,
         "unresolved": unresolved,
@@ -134,6 +145,19 @@ def role_activity(repo_root: str, days: int = DEFAULT_DAYS) -> dict:
 
 
 # ── internals ────────────────────────────────────────────────────────────────
+
+
+def _is_project(root: Path, name: str) -> bool:
+    """A project the board can see — i.e. one that carries a slices.md.
+
+    Same admission rule as `_scan_projects`, so the scoped view can never be
+    opened for something the board never drew a card for. Rejected rather than
+    silently answered with zeros: a typo'd name that returns an empty panel
+    reads exactly like a project that shipped nothing.
+    """
+    if not name or "/" in name or name.startswith("."):
+        return False
+    return (root / "projects" / name / "slices.md").is_file()
 
 
 def _since_date(days: int) -> str:
@@ -162,7 +186,7 @@ def _git(cwd: Path, *args: str) -> Optional[str]:
     return out.stdout if out.returncode == 0 else None
 
 
-def _repos(root: Path) -> list[Path]:
+def _repos(root: Path, project: Optional[str] = None) -> list[Path]:
     """The workspace plus every project code repo that is its own git root.
 
     ADR-0039 §SD4. Candidates come from `projects/README.md § Repos` — the
@@ -185,7 +209,12 @@ def _repos(root: Path) -> list[Path]:
     candidates = [root]
     projects_dir = root / "projects"
     if projects_dir.is_dir():
-        for child in sorted(projects_dir.iterdir()):
+        children = (
+            [projects_dir / project]
+            if project
+            else sorted(p for p in projects_dir.iterdir())
+        )
+        for child in children:
             if not child.is_dir():
                 continue
             repos_dir = child / "repos"
@@ -211,9 +240,18 @@ def _repos(root: Path) -> list[Path]:
 
 
 def _scan_repos(
-    root: Path, ownership: dict[str, dict], since: str
+    root: Path,
+    ownership: dict[str, dict],
+    since: str,
+    project: Optional[str] = None,
 ) -> tuple[list[dict], dict[str, dict], dict]:
-    """Walk every countable repo once, tallying roles and what did not resolve."""
+    """Walk every countable repo once, tallying roles and what did not resolve.
+
+    Scoped to one project (§SD5), the workspace repo is filtered by pathspec —
+    the id carries no project, so the files a commit touched are the only honest
+    signal — while that project's own code repos count in full, since every
+    commit in them is that project's by construction.
+    """
     disciplines = {slug: row["disciplines"] for slug, row in ownership.items()}
     # `_default_role_for_team` returns whatever string it was handed as the
     # role name, so feeding it slugs makes it answer in slugs — the form the
@@ -224,13 +262,17 @@ def _scan_repos(
     per_role: dict[str, dict] = {}
     unresolved: list[dict] = []
 
-    for repo in _repos(root):
+    for repo in _repos(root, project):
+        # Only the workspace repo needs the filter; a project's own repo is
+        # entirely that project's, and `projects/<name>` does not exist inside it.
+        pathspec = ["--", f"projects/{project}"] if project and repo == root else []
         log = _git(
             repo,
             "log",
             "--no-merges",
             f"--since={since} 00:00:00 {_OWNER_OFFSET}",
             f"--pretty=format:%H{_FIELD_SEP}%B{_RECORD_SEP}",
+            *pathspec,
         )
         if log is None:
             continue
@@ -328,7 +370,7 @@ def _resolve(
 
 
 def _open_rows(
-    root: Path, ownership: dict[str, dict]
+    root: Path, ownership: dict[str, dict], project: Optional[str] = None
 ) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
     """Rows each role still holds, per board column (§SD6).
 
@@ -354,8 +396,10 @@ def _open_rows(
     except ValueError:
         return per_role, unassigned
 
-    for project in payload.get("projects", []):
-        for row in project.get("slices", []):
+    for entry in payload.get("projects", []):
+        if project and entry.get("name") != project:
+            continue
+        for row in entry.get("slices", []):
             column = row.get("column")
             if column not in OPEN_COLUMNS:
                 continue

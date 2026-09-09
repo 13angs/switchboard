@@ -9,9 +9,12 @@ import {
 import {
   composePrompt,
   composeGrillPrompt,
+  composeFillGapsPrompt,
   promptShapeFor,
   dispatchLabel,
 } from '../lib/dispatch-prompt';
+import { projectGaps, type ProjectGaps } from '../lib/project-gaps';
+import { ProjectGapsDialog } from './ProjectGaps';
 import {
   readProjectParam,
   withProjectParam,
@@ -56,6 +59,14 @@ export function WorkPage() {
     slice: WorkspaceSlice;
   } | null>(null);
   const [grilling, setGrilling] = useState<WorkspaceProject | null>(null);
+  // ADR-0040 — two steps on purpose: the gap panel shows what is missing, and
+  // only a second press hands that list to a grill. Nothing dispatches from a
+  // glance at a badge.
+  const [gapsFor, setGapsFor] = useState<WorkspaceProject | null>(null);
+  const [filling, setFilling] = useState<{
+    project: WorkspaceProject;
+    gaps: ProjectGaps;
+  } | null>(null);
   // ADR-0039 — the participation panel reads git log, so it is opened by a
   // press and never on load: nothing about it belongs in the board's own fetch.
   const [measuring, setMeasuring] = useState(false);
@@ -191,6 +202,7 @@ export function WorkPage() {
             dispatch={data.dispatch}
             onDispatch={(slice) => setPicked({ project: p, slice })}
             onGrill={() => setGrilling(p)}
+            onGaps={() => setGapsFor(p)}
           />
         ))}
 
@@ -207,6 +219,25 @@ export function WorkPage() {
           project={grilling}
           dispatch={data.dispatch}
           onClose={() => setGrilling(null)}
+        />
+      )}
+      {gapsFor && data && (
+        <ProjectGapsDialog
+          project={gapsFor}
+          data={data}
+          onClose={() => setGapsFor(null)}
+          onFill={(gaps) => {
+            setFilling({ project: gapsFor, gaps });
+            setGapsFor(null);
+          }}
+        />
+      )}
+      {filling && data && (
+        <FillGapsDialog
+          project={filling.project}
+          gaps={filling.gaps}
+          dispatch={data.dispatch}
+          onClose={() => setFilling(null)}
         />
       )}
       {measuring && <RoleActivityDialog onClose={() => setMeasuring(false)} />}
@@ -356,6 +387,55 @@ function GrillDialog({
   );
 }
 
+/**
+ * The fill-gaps half of the dispatch surface (ADR-0040 §SD1).
+ *
+ * Deliberately a near-copy of `GrillDialog` rather than a shared abstraction:
+ * they are the *same* shape (ADR-0037's mechanics, verbatim) with different
+ * prompt content, and the day they need to diverge — a different role, a
+ * different tab rule — a shared wrapper would be the thing standing in the way.
+ * What must not diverge is the prompt spine, and that lives in one module.
+ */
+function FillGapsDialog({
+  project,
+  gaps,
+  dispatch,
+  onClose,
+}: {
+  project: WorkspaceProject;
+  gaps: ProjectGaps;
+  dispatch: WorkspaceDispatch;
+  onClose: () => void;
+}) {
+  return (
+    <DispatchDialog
+      action="เติมช่องที่ขาด"
+      subject={project.name}
+      dispatch={dispatch}
+      preferredRole={null}
+      tierPicker={
+        dispatch.present
+          ? {
+              role: 'forge',
+              tiers: dispatch.tiers,
+              defaultTier: 'heavy',
+              defaultEffort: 'high',
+            }
+          : null
+      }
+      openMode="new-tab"
+      notice={
+        <p className="dlg-grill">
+          session นี้ <b>ไม่ implement เอง</b> และ <b>ไม่แปลงช่องว่างเป็นแถวทุกช่อง</b> —
+          กริลก่อน แล้วเปิด PR ที่แก้เฉพาะ <code>slices.md</code> ของ {project.name}
+        </p>
+      }
+      compose={(role) => composeFillGapsPrompt(project, gaps, role)}
+      onClose={onClose}
+    />
+  );
+}
+
 /** A title or note past this many characters gets clamped by CSS, so the
  *  [อ่านเต็ม] button only needs to know the character count — never the
  *  rendered DOM height (slices.md S21 §(ง)). */
@@ -366,20 +446,31 @@ function ProjectBoard({
   dispatch,
   onDispatch,
   onGrill,
+  onGaps,
 }: {
   project: WorkspaceProject;
   dispatch: WorkspaceDispatch;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
+  onGaps: () => void;
 }) {
   const [reading, setReading] = useState<WorkspaceSlice | null>(null);
-  const missing = (['scope', 'risks', 'hld'] as const).filter(
-    (k) => !project.has[k],
-  );
+  // Same function the gap dialog uses, so the badge and the panel can never
+  // report two different numbers (ADR-0040 §SD2).
+  const gaps = projectGaps(project, { dispatch });
+  const missing = gaps.missingSlots;
   return (
     <section className="project">
       <div className="project-head">
         <h2>{project.name}</h2>
+        <button
+          className="gaps"
+          onClick={onGaps}
+          title="โปรเจกต์นี้ขาดอะไรจาก workflow ที่ team-os ประกาศไว้ — และส่งช่องที่ขาดเข้ากริล"
+        >
+          เติมช่องที่ขาด
+          {gaps.count > 0 && <span className="n">{gaps.count}</span>}
+        </button>
         <button
           className="grill"
           onClick={onGrill}

@@ -23,9 +23,10 @@ Endpoints:
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
     GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[], unmapped[]}]}
                                          (slices.md S9; bars carry their ritual per ADR-0036)
-    GET  /roles/activity?days=         -> {roles[], repos[], unresolved, totals} (ADR-0039)
+    GET  /roles/activity?days=&project= -> {roles[], repos[], unresolved, totals} (ADR-0039)
                                          commits shipped per role, paired with rows
-                                         still open; 7 roles always, zeros included
+                                         still open; 7 roles always, zeros included.
+                                         `project` scopes both by path (ADR-0040 §SD5)
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
@@ -1241,8 +1242,13 @@ def make_handler(repo_root: str):
                     return
             else:
                 days = role_activity.DEFAULT_DAYS
+            # ADR-0040 §SD5 — scoping is by path, and an unknown name is a 400
+            # rather than an empty panel that reads like "shipped nothing".
+            project = (qs.get("project") or [""])[0].strip() or None
             try:
-                self._json(200, role_activity.role_activity(repo_root, days))
+                self._json(
+                    200, role_activity.role_activity(repo_root, days, project)
+                )
             except ValueError as e:
                 self._json(400, {"error": str(e)})
             except Exception as e:
