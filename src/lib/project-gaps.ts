@@ -52,12 +52,12 @@ export function projectGaps(
     rowsPerRole[slice.role] = (rowsPerRole[slice.role] ?? 0) + 1;
   }
 
+  // Narrowed inline rather than through a `rolesUnknown` flag: the flag is a
+  // boolean, and TypeScript cannot carry a discriminant through one.
+  const rolesWithoutRows = data.dispatch.present
+    ? data.dispatch.roles.map((r) => r.role).filter((role) => !rowsPerRole[role])
+    : [];
   const rolesUnknown = !data.dispatch.present;
-  const rolesWithoutRows = rolesUnknown
-    ? []
-    : data.dispatch.roles
-        .map((r) => r.role)
-        .filter((role) => !rowsPerRole[role]);
 
   return {
     missingSlots,
