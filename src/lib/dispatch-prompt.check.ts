@@ -9,6 +9,7 @@ import {
   composePrompt,
   composeRitualPrompt,
   composeGrillPrompt,
+  composeFillGapsPrompt,
   assignmentId,
   promptShapeFor,
   dispatchLabel,
@@ -310,5 +311,74 @@ assert(gp.includes("ย้อนกลับได้"), "the central rules ride
 // other three shapes.
 const grillBare = composeGrillPrompt(bare, grillRole);
 assert(!grillBare.includes("scope.md"), "absent scope.md not cited in grill");
+
+// ── fill-gaps: grill's mechanics, with an agenda (ADR-0040 §SD1) ──
+const gaps = {
+  missingSlots: ["rollout", "retro"],
+  rolesWithoutRows: ["QA", "Senior Developer"],
+  rolesUnknown: false,
+};
+const fg = composeFillGapsPrompt(project, gaps, grillRole);
+assert(fg.includes("rollout") && fg.includes("retro"), "missing slots named");
+assert(
+  fg.includes("QA") && fg.includes("Senior Developer"),
+  "roles with no row are named — the agenda is measured, not re-derived",
+);
+assert(
+  fg.includes("Assignment: winona/-/forge/") &&
+    fg.includes("Team-Slug-Approved: Don"),
+  "fill-gaps reuses grill's id contract verbatim (§SD1: an entry point, not a shape)",
+);
+assert(
+  fg.includes("ห้ามแปลงช่องว่างเป็นแถวแบบหนึ่งต่อหนึ่ง"),
+  "the one rule this surface exists to state: a gap is evidence, not an instruction",
+);
+assert(
+  fg.includes("ช่องที่ว่างต้องเขียนว่าว่าง"),
+  "a slot that stays empty has to say why — team-os/README.md rule 3",
+);
+assert(
+  fg.includes(`projects/${project.name}/slices.md`),
+  "the write target is named, and it is one file",
+);
+// The declared-but-absent files must never become this session's job to create:
+// it opens rows, it does not write rollout.md itself.
+assert(
+  fg.includes("ไม่ implement เอง"),
+  "fill-gaps keeps grill's no-implementation bar",
+);
+for (const f of [
+  "team-os/ways-of-working/definition-of-done.md",
+  "team-os/ways-of-working/stuck-rule.md",
+  "team-os/decisions/README.md",
+])
+  assert(fg.includes(f), `${f} cited in the fill-gaps prompt too`);
+assert(fg.includes("ย้อนกลับได้"), "the central rules ride along here too");
+
+// Both axes have an honest empty state, and the role axis has an honest
+// *unknown* state — dispatch unreadable must not read as "no gaps".
+const noGaps = composeFillGapsPrompt(
+  project,
+  { missingSlots: [], rolesWithoutRows: [], rolesUnknown: false },
+  grillRole,
+);
+assert(
+  noGaps.includes("ครบทุกช่องที่ประกาศไว้") &&
+    noGaps.includes("ทุก role มีอย่างน้อยหนึ่งแถวแล้ว"),
+  "an empty axis says so rather than printing an empty list",
+);
+const rolesDark = composeFillGapsPrompt(
+  project,
+  { missingSlots: [], rolesWithoutRows: [], rolesUnknown: true },
+  grillRole,
+);
+assert(
+  rolesDark.includes("แกน role อ่านไม่ได้"),
+  "an unreadable role axis is stated, never shown as zero gaps",
+);
+
+// A project missing scope.md is not told to read it here either.
+const fgBare = composeFillGapsPrompt(bare, gaps, grillRole);
+assert(!fgBare.includes(`projects/${bare.name}/scope.md`), "absent scope.md not cited in fill-gaps");
 
 console.log("dispatch-prompt check: OK");

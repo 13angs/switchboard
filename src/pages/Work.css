@@ -254,6 +254,39 @@
   color: var(--blocked);
   font-family: var(--mono);
 }
+/* ADR-0040 — the gap button sits ahead of grill and takes over the auto margin,
+   because it is the one that answers "is there anything to grill about". */
+.project-head .gaps {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.project-head .gaps:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.project-head .gaps .n {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-ink);
+  font-size: 10px;
+  text-align: center;
+}
+.project-head .gaps + .grill {
+  margin-left: 0;
+}
+
 /* ADR-0037 — every project card gets this, not only ones without slices.md:
    grill produces a *row*, so a project already mid-flight can still use it. */
 .project-head .grill {
@@ -1078,4 +1111,102 @@
 .ra-prov .warn,
 .ra-prov b.warn {
   color: var(--accent-ink);
+}
+
+/* ── project gap panel (ADR-0040) ── */
+.dlg.gaps {
+  width: min(640px, 100%);
+}
+.gaps-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gaps-axis h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+.gaps-axis h4 em {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+.gaps-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gaps-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+.gaps-list li.missing {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.gaps-list li .mark {
+  font-size: 11px;
+}
+.gaps-list li code {
+  font-family: var(--mono);
+  color: var(--fg);
+}
+.gaps-list li em {
+  font-style: normal;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+.gaps-none,
+.gaps-note,
+.gaps-warn,
+.gaps-why {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.gaps-warn {
+  color: var(--accent-ink);
+}
+.gaps-note code,
+.gaps-why code,
+.gaps-warn code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.dlg.gaps .dlg-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+.gaps-fill {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.gaps-fill:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
 }

@@ -45,6 +45,25 @@ _OWNER_MARK = "🖐️"
 
 COLUMN_ORDER = ("done", "running", "next", "todo", "owner", "off")
 
+# Which files team-os says a project should carry (ADR-0040 §SD2). Read from the
+# workspace, never mirrored here — same discipline as _scan_dispatch. Anchored on
+# the heading because that table's column headers are Thai prose with no pinned
+# English keyword to find it by, unlike rituals.md (ADR-0036 §SD2).
+_SLOTS_FILE = ("team-os", "projects", "README.md")
+_SLOTS_HEADING = "ช่องที่ต้นแบบมี"
+
+# The one declared slot whose name is not its location: the template calls the
+# living HLD a file, this workspace keeps it as a folder (every context.md points
+# at docs/design/*), and _scan_projects has mapped it that way since ADR-0029.
+_SLOT_LOCATIONS: dict[str, tuple[str, str]] = {"hld": ("dir", "docs/design")}
+
+# What `has` reports when the declaration cannot be read (ADR-0040 §SD4). Not a
+# mirror of the table: a degraded mode that says on screen that it is degraded,
+# so a reworded heading upstream cannot silently delete a shipped board badge.
+FALLBACK_SLOTS = ("scope", "risks", "hld")
+
+_SLOT_NAME = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)\.md\b")
+
 # module-level cache: repo_root -> (head_sha, payload)
 _CACHE: dict[str, tuple[str, dict]] = {}
 
@@ -86,7 +105,8 @@ def workspace_overview(
         if cached and cached[0] == head:
             return cached[1]
 
-    projects = _scan_projects(root)
+    slots = project_slots(root)
+    projects = _scan_projects(root, slots)
     dispatch = _scan_dispatch(root)
     _attach_default_roles(root, projects, dispatch)
     payload = {
@@ -94,6 +114,7 @@ def workspace_overview(
         "repo": str(root),
         "head": head,
         "stale_by": "one merged PR — this view reads committed files only",
+        "slots": slots,
         "projects": projects,
         "totals": _totals(projects),
         "gaps": _scan_gaps(root),
@@ -172,11 +193,19 @@ def _head_sha(root: Path) -> str:
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
-def _scan_projects(root: Path) -> list[dict]:
-    """Every projects/<name>/ that carries a slices.md, plus what it is missing."""
+def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
+    """Every projects/<name>/ that carries a slices.md, plus what it is missing.
+
+    `has` follows the slots team-os declares (ADR-0040 §SD4) rather than three
+    hardcoded names, so the card's "ยังไม่มี:" badge and the gap dialog are one
+    list. When the declaration cannot be read it falls back to the original
+    three and `payload["slots"]["source"]` says so.
+    """
     projects_dir = root / "projects"
     if not projects_dir.is_dir():
         return []
+    if slots is None:
+        slots = project_slots(root)
 
     found: list[dict] = []
     for child in sorted(projects_dir.iterdir()):
@@ -194,14 +223,90 @@ def _scan_projects(root: Path) -> list[dict]:
                 "columns": _bucket(slices),
                 "client": owns.get("client", ""),
                 "team": owns.get("team", ""),
-                "has": {
-                    "scope": (child / "scope.md").is_file(),
-                    "risks": (child / "risks.md").is_file(),
-                    "hld": (child / "docs" / "design").is_dir(),
-                },
+                "has": _slot_presence(child, slots["slots"]),
             }
         )
     return found
+
+
+def project_slots(root: Path) -> dict:
+    """The files a project is expected to carry, read from team-os (§SD2).
+
+    Returns `{"source", "slots": [...], "unmapped": [...], "reason"}`. A slot is
+    a row of `team-os/projects/README.md § ช่องที่ต้นแบบมี …` whose first cell
+    names a `*.md` file; the row that names the *router's* status table has no
+    such token and is reported under `unmapped` rather than dropped, because a
+    template slot the board does not check is a fact the screen should carry.
+
+    The section's "มีกี่โปรเจกต์" column is deliberately not read: it was
+    measured 2026-09-05 and is already stale (it says slices.md is 1/31 while
+    six projects carry one today). Counting is the board's job, not the table's.
+    """
+    path = root.joinpath(*_SLOTS_FILE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return _fallback_slots(f"ไม่พบ {'/'.join(_SLOTS_FILE)}")
+
+    found: list[str] = []
+    unmapped: list[str] = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if in_section:
+                break  # section ended; later tables are a different axis
+            in_section = _SLOTS_HEADING in stripped
+            continue
+        if not in_section or not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        first = _strip_md(cells[0])
+        if not first or set(first) <= set("-: "):
+            continue  # separator row
+        match = _SLOT_NAME.search(first)
+        if match is None:
+            if first != "ช่อง":  # the header cell itself
+                unmapped.append(first)
+            continue
+        key = match.group(1)
+        if key not in found:
+            found.append(key)
+
+    if not found:
+        return _fallback_slots(
+            f"ไม่พบตารางช่องใต้หัวข้อ {_SLOTS_HEADING} ใน {path.name}"
+        )
+    return {
+        "source": "declared",
+        "reason": "",
+        "slots": [_slot(key) for key in found],
+        "unmapped": unmapped,
+    }
+
+
+def _fallback_slots(reason: str) -> dict:
+    return {
+        "source": "fallback",
+        "reason": reason,
+        "slots": [_slot(key) for key in FALLBACK_SLOTS],
+        "unmapped": [],
+    }
+
+
+def _slot(key: str) -> dict:
+    kind, where = _SLOT_LOCATIONS.get(key, ("file", f"{key}.md"))
+    return {"key": key, "kind": kind, "where": where}
+
+
+def _slot_presence(project_dir: Path, slots: list[dict]) -> dict[str, bool]:
+    out: dict[str, bool] = {}
+    for slot in slots:
+        target = project_dir / slot["where"]
+        out[slot["key"]] = target.is_dir() if slot["kind"] == "dir" else target.is_file()
+    return out
 
 
 def _frontmatter(path: Path) -> dict[str, str]:

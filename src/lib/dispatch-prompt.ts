@@ -23,6 +23,11 @@
  * resolved through the 7-role table, because the row that would carry a role
  * does not exist until the grill session writes it.
  *
+ * `composeFillGapsPrompt` (ADR-0040) is not a fifth shape — it is a second
+ * entry point to the fourth. Same role, same tier picker, same new tab, same
+ * "PR touching only slices.md" contract; the only difference is that the grill
+ * arrives with an agenda that has already been measured.
+ *
  * Kept in pure functions so they are checkable offline (dispatch-prompt.check.ts)
  * and so the operator previews the exact text that will be typed, not an
  * approximation of it.
@@ -332,6 +337,126 @@ export function composeGrillPrompt(
   lines.push(`Team-Slug-Approved: Don ${today} — grill session, no role owns elicitation yet`);
   lines.push(
     "(การกดปุ่ม grill ของเจ้าของคือ green light รายครั้งสำหรับ trailer นี้ — ADR-0037 §SD1)",
+  );
+
+  return lines.join("\n");
+}
+
+/**
+ * The prompt the "เติมช่องที่ขาด" button opens with (ADR-0040 §SD1).
+ *
+ * Everything mechanical is `composeGrillPrompt`'s: role `forge` written
+ * straight in, the tier from the dialog's two dropdowns, a PR that touches only
+ * this project's `slices.md`, and the `Team-Slug-Approved:` trailer ADR-0037
+ * §SD1 established. What this adds is the agenda — the roles with no row at all
+ * and the template slots with no file — measured by the board rather than
+ * re-derived by the session.
+ *
+ * The ⛔ block is the part that matters most. A gap is *evidence*, not an
+ * instruction: `platform-core` may genuinely have no QA work, and turning six
+ * empty slots into six rows would produce a tidy file that lies. So the session
+ * is told to grill first and to write down why a slot stays empty — which is
+ * team-os/README.md's own rule 3, "ช่องที่ว่างต้องเขียนว่าว่าง".
+ */
+export function composeFillGapsPrompt(
+  project: WorkspaceProject,
+  gaps: { missingSlots: string[]; rolesWithoutRows: string[]; rolesUnknown: boolean },
+  role: DispatchRole,
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `คุณรับบทบาท **${role.role}** ของ team-os (รันบน tier \`${role.tier}\`)`,
+  );
+  lines.push("");
+
+  lines.push(
+    `งาน: **กริลช่องที่ขาด** ของ **${project.name}** ให้กลายเป็นแถวใน **projects/${project.name}/slices.md**`,
+  );
+  lines.push(
+    "เสร็จเมื่อ: ทุกช่องข้างล่างถูกตัดสินแล้วว่า *เปิดเป็นแถว* หรือ *ปล่อยว่างพร้อมเหตุผลที่เขียนไว้* แล้วเปิด PR ที่แก้เฉพาะไฟล์นั้น — **ไม่ implement เอง**",
+  );
+  lines.push("");
+
+  lines.push("ช่องที่บอร์ดวัดได้ ณ ตอนกด — ทั้งสองแกนมาจากที่ที่ workspace ประกาศไว้เอง:");
+  if (gaps.missingSlots.length > 0) {
+    lines.push(
+      `- **เอกสาร/ระยะที่ยังไม่มีไฟล์** (team-os/projects/README.md § ช่องที่ต้นแบบมี): ${gaps.missingSlots
+        .map((s) => `\`${s}\``)
+        .join(" · ")}`,
+    );
+  } else {
+    lines.push("- **เอกสาร/ระยะ**: ครบทุกช่องที่ประกาศไว้");
+  }
+  if (gaps.rolesUnknown) {
+    lines.push(
+      "- ⚠️ **แกน role อ่านไม่ได้** — บอร์ดอ่านแผนที่ role → model ไม่ออก ⇒ ตรวจเองจาก team-os/people/roles.md § แกนความเป็นเจ้าของ อย่าเดา",
+    );
+  } else if (gaps.rolesWithoutRows.length > 0) {
+    lines.push(
+      `- **role ที่ไม่มีแถวเลยในไฟล์นี้** (team-os/people/roles.md, นับทุกคอลัมน์ รวม \`✅\`): ${gaps.rolesWithoutRows
+        .map((r) => `\`${r}\``)
+        .join(" · ")}`,
+    );
+  } else {
+    lines.push("- **role**: ทุก role มีอย่างน้อยหนึ่งแถวแล้ว");
+  }
+  lines.push("");
+
+  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
+  lines.push(
+    `- projects/${project.name}/slices.md — โครง + กฎการเขียนแถวของไฟล์นี้ + แถวที่มีอยู่แล้ว`,
+  );
+  if (project.has.scope)
+    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
+  if (project.has.risks)
+    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
+  lines.push(
+    "- team-os/projects/README.md § ช่องที่ต้นแบบมี แต่ workspace ยังไม่มี — ช่องแต่ละช่องตอบคำถามอะไร",
+  );
+  lines.push(
+    "- team-os/people/roles.md § แกนความเป็นเจ้าของ — role ไหนถือ discipline อะไร",
+  );
+  lines.push("- docs/sops/sop-forge-planning.md — elicit → structure → grill → finalize");
+  lines.push("- tools/grill-me/grill-ruleset.md — วิธี grill-me");
+  lines.push(
+    "- docs/sops/sop-work-ownership.md § Team-Slug-Approved — วิธีเขียน `Assignment:`/`Team-Slug-Approved:` ของเซสชันนี้",
+  );
+  for (const s of SPINE) lines.push(`- ${s}`);
+  lines.push("");
+
+  lines.push("กฎกลางของ team-os:");
+  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
+  lines.push("");
+
+  lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
+  lines.push(
+    "- **ห้ามแปลงช่องว่างเป็นแถวแบบหนึ่งต่อหนึ่ง** — ช่องที่ว่างเป็น *หลักฐาน* ไม่ใช่ *คำสั่ง* · บางช่องว่างอย่างถูกต้อง (โปรเจกต์นี้อาจไม่มีงานของ role นั้นจริง ๆ) · กริลก่อน แล้วค่อยตัดสินทีละช่อง",
+  );
+  lines.push(
+    "- **ช่องที่ตัดสินว่าให้ว่างต่อ ต้องเขียนไว้ว่าทำไม** — ปล่อยเงียบไม่ได้ (team-os/README.md กฎข้อ 3: *ช่องที่ว่างต้องเขียนว่าว่าง*)",
+  );
+  lines.push(
+    `- **แก้ได้เฉพาะ \`slices.md\` ของ ${project.name}** — ห้ามแตะโค้ดหรือไฟล์อื่น รวมทั้งไฟล์ที่ช่องข้างบนบอกว่ายังไม่มี (สร้าง \`rollout.md\`/\`retro.md\` ขึ้นมาเองไม่ใช่งานของเซสชันนี้ — เปิดเป็น *แถว* ให้มีคนทำ)`,
+  );
+  lines.push(
+    "- **ไม่ implement เอง** และ **ไม่มีทางลัด** — worktree → PR → หยุดรอเจ้าของไฟเขียว",
+  );
+  lines.push("");
+
+  const client = project.client || "internal";
+  const today = new Date().toISOString().slice(0, 10);
+  lines.push(
+    `Assignment: ${client}/-/${role.role}/<task-slug-ที่ตกผลึกได้ตอนจบ>`,
+  );
+  lines.push(
+    "(ช่อง office เป็น `-` เพราะบอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต · ช่อง task-slug ตั้งเองตอนจบ ห้ามเว้นว่าง)",
+  );
+  lines.push(
+    `Team-Slug-Approved: Don ${today} — grill session, no role owns elicitation yet`,
+  );
+  lines.push(
+    "(การกดปุ่มของเจ้าของคือ green light รายครั้งสำหรับ trailer นี้ — ADR-0037 §SD1 · ADR-0040 §SD1)",
   );
 
   return lines.join("\n");
