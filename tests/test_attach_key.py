@@ -150,5 +150,82 @@ def test_client_resolves_the_reconnect_url_per_attempt():
     assert "resolveUrlRef.current?.()" in hook
 
 
+# --- dispatch surface carries the key too (S13, closes risks.md S-11) -----
+# `_get_or_spawn` has issued an attach_key to every PTY since 0028, but
+# `POST /session/start` — the dispatch surface's only spawn path — never put
+# it on the wire, and the browser never carried it back. Dispatch would type
+# the prompt into one PTY, then navigate to a page with no identity at all,
+# which spawned a second, blank PTY (S-11's "PTY ลอยเกินมาหนึ่งใบ").
+
+
+def test_session_start_returns_the_attach_key_it_already_issued():
+    src = (_ROOT / "server.py").read_text()
+    # Isolate the handler so this doesn't pass by matching some unrelated
+    # "attach_key" string elsewhere in the file.
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert body.count('"attach_key": term.attach_key') == 2, (
+        "both the 200 (id known) and 202 (id-less window) branches must "
+        "return the key — the id-less window is exactly when dispatch needs it"
+    )
+
+
+def test_session_start_reports_prompt_submitted_in_both_branches():
+    """ADR-0034 §SD4 / ADR-0038 §SD2 — a dispatched session's reachability
+    depends on the server actually submitting its first prompt; both the 200
+    and 202 branches must report whether that happened, same as attach_key."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert body.count('"prompt_submitted": prompt_submitted') == 2
+
+
+def test_session_start_only_submits_on_the_dispatch_signature():
+    """model + prompt together is the one signature DispatchDialog sends —
+    resume, prompt-less spawn, and chat's own path must stay untouched."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert "submit_prompt = bool(requested_model) and bool(prompt)" in body
+
+
+def test_session_start_does_not_double_wait_on_the_dispatch_path():
+    """`_submit_typed_prompt` already waits up to `_SUBMIT_RETRY_WINDOW_S` for
+    `term.session_id` on the dispatch-submit signature (S24). Running the
+    older 30s id-capture wait again afterward on that same path adds latency
+    to a result nothing can still change — it must be gated on the same
+    `prompt_typed and submit_prompt` condition that decided whether
+    `_submit_typed_prompt` ran at all."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert "if not (prompt_typed and submit_prompt):" in body
+
+
+def test_dispatch_dialog_forwards_the_key_it_was_given():
+    dialog = (_ROOT / "src" / "pages" / "DispatchDialog.tsx").read_text()
+    assert "res.attach_key" in dialog, (
+        "dispatch must read attach_key off the /session/start response and "
+        "put it on the URL it navigates to, or the terminal page it opens "
+        "has no identity to attach with"
+    )
+
+
+def test_agent_page_seeds_the_first_connect_from_the_url_attach_key():
+    agent = (_ROOT / "src" / "pages" / "Agent.tsx").read_text()
+    assert "qs.get('attach_key')" in agent, (
+        "the page dispatch navigates to must read attach_key from its own "
+        "URL, not only from a control frame received after connecting"
+    )
+    assert "attachKeyRef = useRef<string | null>(initialAttachKey)" in agent, (
+        "the ref must be seeded before the first connect attempt — arriving "
+        "later is too late for buildWsUrl's initial call"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

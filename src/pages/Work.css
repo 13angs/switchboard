@@ -163,6 +163,60 @@
   color: var(--fg-dim);
 }
 
+/* ── project picker (slices.md S20) ── */
+.project-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.project-picker .picker-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.project-picker label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+/* 16px keeps a tablet from zooming the page on focus, and the 40px box keeps
+   the tap target above the finger-size floor the whole slice is about. */
+.project-picker select {
+  flex: 1 1 auto;
+  max-width: 26rem;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 16px;
+  font-family: var(--mono);
+}
+.project-picker .picker-scope {
+  margin: 0;
+  font-size: 11px;
+  color: var(--faint);
+}
+.project-picker .picker-scope b {
+  color: var(--muted);
+  font-weight: 600;
+}
+.project-picker code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.project-picker .picker-unknown {
+  margin: 0;
+  font-size: 12px;
+  color: var(--awaiting);
+}
+
 /* ── project ── */
 .project {
   padding: 14px;
@@ -185,6 +239,23 @@
   font-size: 11px;
   color: var(--blocked);
   font-family: var(--mono);
+}
+/* ADR-0037 — every project card gets this, not only ones without slices.md:
+   grill produces a *row*, so a project already mid-flight can still use it. */
+.project-head .grill {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.project-head .grill:hover {
+  border-color: var(--accent);
+  color: var(--fg);
 }
 
 /* ── columns ── */
@@ -277,12 +348,60 @@
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .card .note {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.4;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── card foot — [อ่านเต็ม] + the dispatch button always sit after the
+   (possibly clamped) text, never inside it, so a long note can never
+   swallow the button (slices.md S21). ── */
+.card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.card .read-more {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.card .read-more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.dlg-read-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.dlg-read-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .col-empty {
   color: var(--faint);
@@ -312,6 +431,17 @@
 .card .dispatch:focus-visible {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* The 🖐️ column's button says what it does in words, not on hover — the owner
+   reads this board on a tablet (ADR-0036 §SD5(ค), lesson of S9). */
+.card .dispatch.s-prepare {
+  border-style: dashed;
+}
+.card .dispatch-why {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--faint);
 }
 
 /* ── dispatch dialog ── */
@@ -415,6 +545,55 @@
   color: var(--faint);
   font-size: 11px;
 }
+.dlg-prepare {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-grill {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-grill b {
+  color: var(--fg);
+}
+/* ADR-0037 §SD2 — the two dropdowns that replace the role-list picker when
+   there is no row yet to resolve a role from. */
+.dlg-tier-picker {
+  display: flex;
+  gap: 14px;
+}
+.dlg-tier-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+.dlg-tier-picker select {
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.dlg-prepare b {
+  color: var(--fg);
+}
 .dlg-label {
   font-size: 12px;
   color: var(--muted);
@@ -483,4 +662,267 @@
 .dlg-go:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* ── Daily calendar (slices.md S9) ── */
+
+.calendar {
+  margin: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+.calendar-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.calendar-head h2 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+.calendar-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+.calendar-loading,
+.calendar-error {
+  margin: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.calendar-error {
+  color: var(--blocked);
+  background: var(--blocked-soft);
+}
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.calendar-scale {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 4px 92px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.cal-day {
+  border-bottom: 1px solid var(--line-soft);
+}
+.cal-day:last-child {
+  border-bottom: none;
+}
+.cal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.cal-day.cal-today .cal-date {
+  color: var(--accent);
+  font-weight: 600;
+}
+.cal-date {
+  flex: 0 0 84px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.cal-caret {
+  flex: 0 0 12px;
+  font-size: 10px;
+  color: var(--faint);
+}
+.cal-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.cal-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--faint);
+}
+.cal-block {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 2px;
+}
+.cal-work {
+  background: var(--accent);
+}
+.cal-personal {
+  background: var(--ok);
+}
+.cal-learning {
+  background: var(--awaiting);
+}
+.cal-other {
+  background: var(--idle);
+}
+
+/* the readable part — what "แถบสี" alone cannot say on a touch device */
+.cal-agenda {
+  list-style: none;
+  margin: 0 0 8px 92px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cal-agenda-row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.cal-agenda-row.cal-work {
+  border-left-color: var(--accent);
+  background: none;
+}
+.cal-agenda-row.cal-personal {
+  border-left-color: var(--ok);
+  background: none;
+}
+.cal-agenda-row.cal-learning {
+  border-left-color: var(--awaiting);
+  background: none;
+}
+.cal-agenda-row.cal-other {
+  border-left-color: var(--idle);
+  background: none;
+}
+.ar-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ar-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.ar-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.cal-agenda-empty {
+  margin: 0 0 8px 92px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ── Dispatching a ritual off a calendar bar (ADR-0036 §SD2 · §SD4 · §SD6) ── */
+
+.cal-ritual-off {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--awaiting);
+}
+
+/* A bar whose label names a declared ritual reads slightly brighter than the
+   rest — the same color still carries the domain, so this is a second signal
+   on the strip, not a replacement for the agenda row underneath. */
+.cal-block.cal-ritual {
+  outline: 1px solid var(--fg-dim);
+  outline-offset: -1px;
+}
+
+/* Sits in the agenda row, not on the 3px strip: a bar is not a touch target on
+   a tablet, which is the lesson S9 already paid for once. */
+.ar-dispatch {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.ar-dispatch:hover,
+.ar-dispatch:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Why a row that looks dispatchable has no button. Printed, never a title=. */
+.ar-conflict {
+  color: var(--awaiting);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.cal-unmapped {
+  margin: 4px 0 8px 92px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.cal-unmapped-key {
+  margin-right: 8px;
+}
+.cal-unmapped-key em {
+  color: var(--awaiting);
+  font-style: normal;
+}
+.cal-unmapped-why {
+  color: var(--faint);
+}
+
+.dlg-ritual,
+.dlg-fixed-role {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.dlg-ritual b {
+  color: var(--fg);
 }

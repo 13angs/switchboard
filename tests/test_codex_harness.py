@@ -191,7 +191,10 @@ def test_harness_registry_builds_claude_and_codex_commands():
 
 
 def test_chat_message_payload_uses_terminal_submit_key_per_harness():
-    assert srv_mod._chat_message_payload("hello", "claude") == b"hello\n"
+    """claude and codex are both raw-mode terminal UIs and both need `\\r` —
+    a real terminal's Enter key, with no tty translation to `\\n` (S24: `\\n`
+    for claude was proven wrong against the real binary)."""
+    assert srv_mod._chat_message_payload("hello", "claude") == b"hello\r"
     assert srv_mod._chat_message_payload("hello", "codex") == b"hello\r"
 
 

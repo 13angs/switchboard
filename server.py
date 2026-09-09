@@ -21,14 +21,18 @@ Endpoints:
     GET  /health                      -> {ok: true}
     GET  /work                        -> work board page (work.html) (ADR-0029)
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
+    GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[], unmapped[]}]}
+                                         (slices.md S9; bars carry their ritual per ADR-0036)
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
                                          duration_state, result_summary, result_ts}]}
     POST /session/start               -> spawn a fresh harness PTY
-                                         body {harness?, provider?, model?, prompt?}
-                                         model pins the tier (ADR-0030); prompt is
-                                         typed into the PTY and left unsent
+                                         body {harness?, provider?, model?, effort?, prompt?}
+                                         model pins the tier (ADR-0030); effort pins
+                                         thinking depth (ADR-0032); prompt is typed
+                                         into the PTY and submitted too when model
+                                         is also given (ADR-0034 §SD1, ADR-0038 §SD2)
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
@@ -75,6 +79,7 @@ from control_plane import (
     claude_store,
     config,
     codex_store,
+    daily_calendar,
     discovery,
     harness,
     lock,
@@ -276,8 +281,21 @@ def _read_json_body(
 
 
 def _chat_message_payload(text: str, harness_name: str) -> bytes:
-    """Encode chat input as the submit key sequence expected by the harness."""
-    submit = "\r" if harness_name == "codex" else "\n"
+    """Encode chat input as the submit key sequence expected by the harness.
+
+    `claude` and `codex` both run raw-mode terminal UIs, and a raw-mode tty
+    delivers the physical Enter key exactly as sent — no ICRNL/INLCR
+    translation — so both need `\\r` (carriage return), which is what a real
+    terminal emulator (and this repo's own `Agent.tsx` WS client) actually
+    transmits for Enter. This was `\\n` for `claude` until `S24`'s live
+    reproduction against the real binary proved it never submits: `\\n`
+    written to the PTY sits in the input box, unread as "Enter", for as long
+    as anything keeps retrying it. Every existing unit test stubs the harness
+    binary with `cat` (`ORCH_CLAUDE_BIN=cat` in the `srv` fixture), so nothing
+    here has ever checked the byte against the real TUI — `agy` (a different
+    CLI entirely) keeps its prior `\\n` default rather than guessing.
+    """
+    submit = "\n" if harness_name == "agy" else "\r"
     return (text + submit).encode("utf-8")
 
 
@@ -285,19 +303,37 @@ def _chat_message_payload(text: str, harness_name: str) -> bytes:
 # it. Below this the keystrokes land before the box exists and are swallowed.
 _PROMPT_SETTLE_S = 1.5
 
+# How long to keep re-pressing the submit key on the dispatch path, and how
+# often (S24 / ADR-0038 amendment below). Retrying is only safe for the
+# submit key itself — retrying the prompt text would duplicate it visibly in
+# the input box — so `_type_prompt` never appends it; `_submit_typed_prompt`
+# owns the keypress and its own retry budget.
+#
+# 8.0 was the original guess and was wrong on this workspace's own host: live
+# reproduction (S24, ADR-0038 Amendment 3) against the real server under
+# real contention (this proot host runs several `claude` processes
+# concurrently, including the one doing the reproducing) consistently took
+# 35-50s for a freshly spawned session to become responsive enough to read
+# its first byte of stdin at all — nothing to do with the submit key being
+# wrong; the child simply had not been scheduled yet. The written `\r` sits
+# correctly queued in the PTY's input buffer regardless of when the child
+# gets CPU time to read it, so a longer window does not change what gets
+# sent — only how long this function keeps offering the evidence loop a
+# chance to see it before giving up and reporting failure.
+_SUBMIT_RETRY_INTERVAL_S = 1.0
+_SUBMIT_RETRY_WINDOW_S = 60.0
+
 
 def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
-    """Type a prepared prompt into a fresh PTY — and deliberately not send it.
+    """Type a prepared prompt's text into a fresh PTY. Never appends a submit
+    key (ADR-0030 §SD3) — a resume/prompt-less/manual dispatch leaves it in
+    the input box unsent; the dispatch path presses Enter itself afterward,
+    via `_submit_typed_prompt`, as its own write (S24 — see that function's
+    docstring for why the two must not share one `term.write()` call).
 
-    The submit key is withheld on purpose (ADR-0030 SD3). The board's job is to
-    assemble the context; deciding that the work should actually start is a
-    person's, and the difference between the two is exactly one keystroke this
-    server does not press. `_chat_message_payload` appends that keystroke; this
-    path must never call it.
-
-    Returns whether the text reached the PTY. A failure here is not fatal to the
-    spawn: the session is already live and usable, the operator just has an
-    empty input box, so it is reported rather than raised.
+    Returns whether the text reached the PTY. A failure here is not fatal to
+    the spawn: the session is already live and usable, so it is reported
+    (`prompt_typed`) rather than raised.
     """
     if not term.is_alive():
         return False
@@ -307,6 +343,52 @@ def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
     except OSError:
         return False
     return True
+
+
+def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
+    """Press Enter for a prompt `_type_prompt` already typed (ADR-0034 §SD1,
+    implemented at ADR-0038 §SD2 — this function is `S24`'s amendment to
+    that implementation, not a new decision).
+
+    `_type_prompt` used to hand the prompt text and the submit key to
+    `term.write()` **together**, reusing `_chat_message_payload`. `S24` found
+    that a single write carrying an embedded trailing `\\r`/`\\n` is exactly
+    what the harness's TUI reads as a bracketed paste, not a keypress: the
+    whole chunk lands in the input box as `[Pasted text …]` and the trailing
+    byte becomes a literal newline *inside* that pasted text instead of
+    submitting it. No first turn ever reaches the harness, so it never writes
+    the jsonl that gives the session a `session_id` (ADR-0028) — the session
+    is spawned but permanently invisible to the board.
+
+    The fix is to never bundle the two again: the submit key goes in its own
+    `term.write()`, using the same `_chat_message_payload` encoding (empty
+    text, so only the submit byte(s) survive) — reused, not reimplemented.
+
+    One write is still not enough to trust blindly — `_PROMPT_SETTLE_S` is an
+    observed guess, not a signal that the TUI is actually ready
+    (`risks.md S-03`), and a slow `SessionStart` hook can outlast it. Retrying
+    the *text* would duplicate it on screen, but retrying only the submit key
+    is safe: an extra `\\r`/`\\n` into an already-submitted, now-empty input
+    box is a no-op. So this re-presses Enter every `_SUBMIT_RETRY_INTERVAL_S`
+    until the harness's own jsonl proves the turn actually landed — read via
+    `term.session_id`, which `_start_id_capture`'s background poll (started
+    at spawn, already running by the time this executes) sets the moment it
+    finds that jsonl — capped at `_SUBMIT_RETRY_WINDOW_S`. Evidence of a first
+    turn decides when to stop, not elapsed time.
+
+    Returns whether that evidence showed up before the window closed. This is
+    the value `prompt_submitted` reports — bytes reaching the PTY is no
+    longer sufficient to claim a submit happened.
+    """
+    submit_key = _chat_message_payload("", term.harness)
+    deadline = time.time() + _SUBMIT_RETRY_WINDOW_S
+    while term.is_alive() and term.session_id is None and time.time() < deadline:
+        try:
+            term.write(submit_key)
+        except OSError:
+            return False
+        time.sleep(_SUBMIT_RETRY_INTERVAL_S)
+    return term.session_id is not None
 
 
 def _transcript_source(
@@ -552,6 +634,7 @@ def _get_or_spawn(
     child_env: Optional[dict] = None,
     attach_key: Optional[str] = None,
     model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> tuple[terminal.PtyTerminal, bool]:
     """Return (terminal, reused). Reuse a live registered terminal for
     session_id or attach_key; else spawn (injecting the provider env) +
@@ -569,7 +652,8 @@ def _get_or_spawn(
 
     v3.0 (ADR-0030): `model` pins the tier, and applies to a *fresh* spawn only.
     A resume re-enters a session that already has a model; re-pinning it here
-    would silently change the tier of work already in flight."""
+    would silently change the tier of work already in flight. `effort`
+    (ADR-0032) rides the same fresh-spawn-only rule."""
     with _reg_lock:
         term = _registry.get(session_id) if session_id else None
         if term is not None and not term.is_alive():
@@ -615,6 +699,7 @@ def _get_or_spawn(
             cwd=cwd,
             provider=provider,
             model=None if session_id else model,
+            effort=None if session_id else effort,
             env=child_env,
             output_observer=_observe_terminal_output,
             input_observer=_LIFECYCLE_DETECTOR.observe_input,
@@ -924,6 +1009,8 @@ def make_handler(repo_root: str):
                     self._json(404, {"error": "not found"})
             elif path == "/workspace":
                 self._workspace(repo_root)
+            elif path == "/calendar":
+                self._calendar(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -1070,6 +1157,66 @@ def make_handler(repo_root: str):
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
+        def _calendar(self, repo_root: str):
+            """GET /calendar — daily-schedule bars for the Work board (S9).
+
+            `?date=YYYY-MM-DD` centers the window (default: today, Asia/Bangkok
+            — the owner's day, not the container's UTC); `?before=`/`?after=`
+            widen it (default 2/2, so 5 bars). Not HEAD-cached like /workspace:
+            "today" moves with the clock, not with a commit.
+            """
+            qs = parse_qs(urlparse(self.path).query)
+            date_param = (qs.get("date") or [""])[0]
+            if date_param:
+                try:
+                    center = datetime.strptime(date_param, "%Y-%m-%d").date()
+                except ValueError:
+                    self._json(400, {"error": "date must be YYYY-MM-DD"})
+                    return
+            else:
+                center = daily_calendar.today_bangkok()
+
+            def _int_param(name: str, default: int) -> Optional[int]:
+                raw = (qs.get(name) or [""])[0]
+                if not raw:
+                    return default
+                try:
+                    return int(raw)
+                except ValueError:
+                    return None
+
+            before = _int_param("before", 2)
+            after = _int_param("after", 2)
+            if before is None or after is None or before < 0 or after < 0:
+                self._json(400, {"error": "before/after must be non-negative integers"})
+                return
+
+            # ADR-0036 — the bars carry their ritual, so the board knows which
+            # ones can be pressed. Resolved here rather than in the browser:
+            # the "two keys on one bar = no button" rule and the id it composes
+            # are one decision, and one decision belongs in one tested place.
+            registry = workspace.ritual_registry(repo_root)
+            days = daily_calendar.window_schedule(
+                Path(repo_root),
+                center,
+                before=before,
+                after=after,
+                rituals=registry["rituals"],
+            )
+            self._json(
+                200,
+                {
+                    "center": center.isoformat(),
+                    "days": days,
+                    "rituals": {
+                        "present": registry["present"],
+                        "reason": registry.get("reason", ""),
+                        "source": registry["source"],
+                        "declared": len(registry["rituals"]),
+                    },
+                },
+            )
+
         def _timeline(self, session_id: str, repo_root: str):
             """ADR-0017 §SD1 — tool calls for one session, on demand.
 
@@ -1180,8 +1327,18 @@ def make_handler(repo_root: str):
             v3.0 (ADR-0030) adds two optional fields:
               model  — pins the tier the session runs on, validated against the
                        lineup the *workspace* declares, never a list held here.
-              prompt — typed into the PTY and left unsent. The board prepares
-                       the work; a person still presses Enter."""
+              prompt — typed into the PTY. When `model` is also given (the
+                       board's dispatch dialog is the only caller that sends
+                       both), the server submits it too (ADR-0034 §SD1,
+                       ADR-0038 §SD2, amended by S24 — see
+                       `_submit_typed_prompt`) — the click on "สั่งงาน" already
+                       is the decision. Without `model`, the prompt is left
+                       unsent as before (ADR-0030 §SD3).
+
+            ADR-0032 adds a third:
+              effort — pins the thinking depth. Validated against the fixed set
+                       the `claude` CLI itself accepts (not workspace-declared —
+                       that lineup belongs to the CLI, not to roles.md)."""
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length <= 0:
                 self._json(400, {"error": "empty body"})
@@ -1227,6 +1384,37 @@ def make_handler(repo_root: str):
                     )
                     return
 
+            requested_effort = body.get("effort")
+            if requested_effort is not None and not isinstance(requested_effort, str):
+                self._json(400, {"error": "effort must be a string"})
+                return
+            requested_effort = (requested_effort or "").strip().lower() or None
+            if requested_effort:
+                if requested_effort not in workspace.VALID_EFFORTS:
+                    self._json(
+                        400,
+                        {
+                            "error": f"unknown effort: {requested_effort}",
+                            "allowed": sorted(workspace.VALID_EFFORTS),
+                        },
+                    )
+                    return
+                if requested_model and workspace.model_tier(
+                    repo_root, requested_model
+                ) == "light":
+                    # ADR-0032 §SD6: the light-tier model (Haiku) rejects
+                    # `--effort` outright — it still uses `budget_tokens`.
+                    self._json(
+                        400,
+                        {
+                            "error": (
+                                "effort ไม่รองรับกับ tier light — โมเดลนี้ใช้ "
+                                "budget_tokens ไม่ใช่ effort"
+                            )
+                        },
+                    )
+                    return
+
             prompt = body.get("prompt")
             if prompt is not None and not isinstance(prompt, str):
                 self._json(400, {"error": "prompt must be a string"})
@@ -1252,7 +1440,13 @@ def make_handler(repo_root: str):
 
             try:
                 term, _reused = _get_or_spawn(
-                    None, cwd, harness_name, provider, child_env, model=requested_model
+                    None,
+                    cwd,
+                    harness_name,
+                    provider,
+                    child_env,
+                    model=requested_model,
+                    effort=requested_effort,
                 )
             except ValueError as e:
                 # e.g. model pinning asked of a harness whose flag is unverified
@@ -1260,14 +1454,35 @@ def make_handler(repo_root: str):
                 return
             discovery.invalidate_cache(repo_root)
 
+            # ADR-0034 §SD1 / ADR-0038 §SD2: model+prompt together is the one
+            # signature the board's dispatch dialog sends (DispatchDialog.tsx)
+            # — resume, prompt-less spawn, and chat's own _chat_message_payload
+            # path are untouched.
+            submit_prompt = bool(requested_model) and bool(prompt)
             prompt_typed = _type_prompt(term, prompt) if prompt else False
+            # S24: bytes reaching the PTY (`prompt_typed`) is not evidence the
+            # harness accepted a first turn — `_submit_typed_prompt` presses
+            # Enter as its own write and only reports True once the harness's
+            # jsonl proves it landed.
+            prompt_submitted = (
+                _submit_typed_prompt(term) if prompt_typed and submit_prompt else False
+            )
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
-            deadline = time.time() + 30
-            while (
-                time.time() < deadline and term.is_alive() and term.session_id is None
-            ):
-                time.sleep(0.25)
+            # Skipped on the dispatch-submit path: _submit_typed_prompt above
+            # already waited on this exact evidence for up to
+            # _SUBMIT_RETRY_WINDOW_S — running this a second time would only
+            # add latency to a result it cannot change (nothing further
+            # presses Enter here to produce new evidence for this loop to
+            # find).
+            if not (prompt_typed and submit_prompt):
+                deadline = time.time() + 30
+                while (
+                    time.time() < deadline
+                    and term.is_alive()
+                    and term.session_id is None
+                ):
+                    time.sleep(0.25)
 
             sid = term.session_id
             if sid:
@@ -1275,23 +1490,35 @@ def make_handler(repo_root: str):
                     200,
                     {
                         "session_id": sid,
+                        "attach_key": term.attach_key,
                         "session_started": True,
                         "harness": harness_name,
                         "provider": provider,
                         "model": requested_model,
+                        "effort": requested_effort,
                         "prompt_typed": prompt_typed,
+                        "prompt_submitted": prompt_submitted,
                     },
                 )
             else:
+                # ADR-0028 §SD1: the PTY already has an attach_key (assigned at
+                # spawn, before session_id exists) — this is the id-less window
+                # the ADR describes. Without it in this response the caller has
+                # no identity to navigate with, and a second surface (the
+                # terminal WS) spawns a duplicate PTY on first connect instead
+                # of attaching to this one (risks.md S-11).
                 self._json(
                     202,
                     {
                         "session_id": None,
+                        "attach_key": term.attach_key,
                         "session_started": False,
                         "harness": harness_name,
                         "provider": provider,
                         "model": requested_model,
+                        "effort": requested_effort,
                         "prompt_typed": prompt_typed,
+                        "prompt_submitted": prompt_submitted,
                         "message": "Session starting; retry to re-check.",
                     },
                 )
