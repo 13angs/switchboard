@@ -308,8 +308,20 @@ _PROMPT_SETTLE_S = 1.5
 # submit key itself — retrying the prompt text would duplicate it visibly in
 # the input box — so `_type_prompt` never appends it; `_submit_typed_prompt`
 # owns the keypress and its own retry budget.
+#
+# 8.0 was the original guess and was wrong on this workspace's own host: live
+# reproduction (S24, ADR-0038 Amendment 3) against the real server under
+# real contention (this proot host runs several `claude` processes
+# concurrently, including the one doing the reproducing) consistently took
+# 35-50s for a freshly spawned session to become responsive enough to read
+# its first byte of stdin at all — nothing to do with the submit key being
+# wrong; the child simply had not been scheduled yet. The written `\r` sits
+# correctly queued in the PTY's input buffer regardless of when the child
+# gets CPU time to read it, so a longer window does not change what gets
+# sent — only how long this function keeps offering the evidence loop a
+# chance to see it before giving up and reporting failure.
 _SUBMIT_RETRY_INTERVAL_S = 1.0
-_SUBMIT_RETRY_WINDOW_S = 8.0
+_SUBMIT_RETRY_WINDOW_S = 60.0
 
 
 def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
@@ -1457,11 +1469,20 @@ def make_handler(repo_root: str):
             )
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
-            deadline = time.time() + 30
-            while (
-                time.time() < deadline and term.is_alive() and term.session_id is None
-            ):
-                time.sleep(0.25)
+            # Skipped on the dispatch-submit path: _submit_typed_prompt above
+            # already waited on this exact evidence for up to
+            # _SUBMIT_RETRY_WINDOW_S — running this a second time would only
+            # add latency to a result it cannot change (nothing further
+            # presses Enter here to produce new evidence for this loop to
+            # find).
+            if not (prompt_typed and submit_prompt):
+                deadline = time.time() + 30
+                while (
+                    time.time() < deadline
+                    and term.is_alive()
+                    and term.session_id is None
+                ):
+                    time.sleep(0.25)
 
             sid = term.session_id
             if sid:

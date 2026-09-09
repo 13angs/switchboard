@@ -192,6 +192,20 @@ def test_session_start_only_submits_on_the_dispatch_signature():
     assert "submit_prompt = bool(requested_model) and bool(prompt)" in body
 
 
+def test_session_start_does_not_double_wait_on_the_dispatch_path():
+    """`_submit_typed_prompt` already waits up to `_SUBMIT_RETRY_WINDOW_S` for
+    `term.session_id` on the dispatch-submit signature (S24). Running the
+    older 30s id-capture wait again afterward on that same path adds latency
+    to a result nothing can still change — it must be gated on the same
+    `prompt_typed and submit_prompt` condition that decided whether
+    `_submit_typed_prompt` ran at all."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert "if not (prompt_typed and submit_prompt):" in body
+
+
 def test_dispatch_dialog_forwards_the_key_it_was_given():
     dialog = (_ROOT / "src" / "pages" / "DispatchDialog.tsx").read_text()
     assert "res.attach_key" in dialog, (
