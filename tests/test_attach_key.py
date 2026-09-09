@@ -171,6 +171,27 @@ def test_session_start_returns_the_attach_key_it_already_issued():
     )
 
 
+def test_session_start_reports_prompt_submitted_in_both_branches():
+    """ADR-0034 §SD4 / ADR-0038 §SD2 — a dispatched session's reachability
+    depends on the server actually submitting its first prompt; both the 200
+    and 202 branches must report whether that happened, same as attach_key."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert body.count('"prompt_submitted": prompt_submitted') == 2
+
+
+def test_session_start_only_submits_on_the_dispatch_signature():
+    """model + prompt together is the one signature DispatchDialog sends —
+    resume, prompt-less spawn, and chat's own path must stay untouched."""
+    src = (_ROOT / "server.py").read_text()
+    start = src.index("def _session_start(")
+    end = src.index("\n        def ", start + 1)
+    body = src[start:end]
+    assert "submit_prompt = bool(requested_model) and bool(prompt)" in body
+
+
 def test_dispatch_dialog_forwards_the_key_it_was_given():
     dialog = (_ROOT / "src" / "pages" / "DispatchDialog.tsx").read_text()
     assert "res.attach_key" in dialog, (

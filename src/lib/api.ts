@@ -109,16 +109,18 @@ export interface StartSessionOptions {
   /** Pins the thinking depth (ADR-0032) — `low`/`medium`/`high`/`xhigh`/`max`.
    *  Fresh spawns only, same rule as `model`. */
   effort?: string;
-  /** Typed into the PTY and left unsent; a person presses Enter. */
+  /** Typed into the PTY. Submitted too when `model` is also given — the
+   *  board's dispatch dialog signature (ADR-0034 §SD1, ADR-0038 §SD2) —
+   *  otherwise left unsent for a person to press Enter on. */
   prompt?: string;
 }
 
 export interface StartSessionResponse {
   session_id: string | null;
   /** Server-issued identity for the PTY, present even before session_id is
-   *  known (ADR-0028 §SD1). The caller must carry it to wherever it navigates
-   *  next, or a fresh connect there spawns a second PTY instead of attaching
-   *  to this one. */
+   *  known (ADR-0028 §SD1). Only grill's new-tab dispatch still carries this
+   *  to where it navigates next (ADR-0038 §SD3) — every other shape stays on
+   *  /work and has nothing to attach. */
   attach_key: string | null;
   session_started: boolean;
   harness?: string;
@@ -126,6 +128,10 @@ export interface StartSessionResponse {
   model?: string | null;
   effort?: string | null;
   prompt_typed?: boolean;
+  /** Whether the submit key reached the PTY too (ADR-0034 §SD4) — only
+   *  meaningful when `model` was given; `undefined`/`false` otherwise. Not
+   *  surfaced anywhere in the UI by design (ADR-0038 §SD4). */
+  prompt_submitted?: boolean;
   message?: string;
 }
 

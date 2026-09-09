@@ -52,7 +52,15 @@ interface PickedRitual {
  *  label names a ritual declared in `rituals.md` carries a dispatch button, on
  *  the row rather than on the colored strip for the same reason the agenda
  *  exists at all — the strip is 3px of color on a tablet. */
-export function DayCalendar({ dispatch }: { dispatch: WorkspaceDispatch | null }) {
+export function DayCalendar({
+  dispatch,
+  onDispatched,
+}: {
+  dispatch: WorkspaceDispatch | null;
+  /** ADR-0038 §SD1 — called after a ritual dispatch stays on /work; the
+   *  caller (Work.tsx) turns it into a toast. */
+  onDispatched?: () => void;
+}) {
   const [data, setData] = useState<CalendarResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -160,6 +168,7 @@ export function DayCalendar({ dispatch }: { dispatch: WorkspaceDispatch | null }
               <b>ไม่มีวันที่ต่อท้าย</b> — มันระบุจังหวะ ไม่ใช่รอบของวันนี้
             </p>
           }
+          onDispatched={onDispatched}
           compose={(role) =>
             composeRitualPrompt(picked.ritual, role, {
               date: picked.date,

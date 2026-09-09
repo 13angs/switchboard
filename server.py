@@ -30,8 +30,9 @@ Endpoints:
     POST /session/start               -> spawn a fresh harness PTY
                                          body {harness?, provider?, model?, effort?, prompt?}
                                          model pins the tier (ADR-0030); effort pins
-                                         thinking depth (ADR-0032); prompt is
-                                         typed into the PTY and left unsent
+                                         thinking depth (ADR-0032); prompt is typed
+                                         into the PTY and submitted too when model
+                                         is also given (ADR-0034 §SD1, ADR-0038 §SD2)
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
@@ -290,24 +291,37 @@ def _chat_message_payload(text: str, harness_name: str) -> bytes:
 _PROMPT_SETTLE_S = 1.5
 
 
-def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
-    """Type a prepared prompt into a fresh PTY — and deliberately not send it.
+def _type_prompt(term: terminal.PtyTerminal, prompt: str, *, submit: bool) -> bool:
+    """Type a prepared prompt into a fresh PTY.
 
-    The submit key is withheld on purpose (ADR-0030 SD3). The board's job is to
-    assemble the context; deciding that the work should actually start is a
-    person's, and the difference between the two is exactly one keystroke this
-    server does not press. `_chat_message_payload` appends that keystroke; this
-    path must never call it.
+    `submit=False` — the submit key is withheld on purpose (ADR-0030 §SD3).
+    Deciding that the work should actually start is a person's; `prompt` sits
+    in the input box unsent.
 
-    Returns whether the text reached the PTY. A failure here is not fatal to the
-    spawn: the session is already live and usable, the operator just has an
-    empty input box, so it is reported rather than raised.
+    `submit=True` (ADR-0034 §SD1, implemented at ADR-0038 §SD2) — the click on
+    the board's "สั่งงาน" button already *is* that decision (ADR-0034's own
+    argument), so this path appends the harness's submit key itself, via the
+    same `_chat_message_payload` the chat path uses. This is what makes a
+    dispatched session reachable later from the board at all: per ADR-0028,
+    the harness writes its jsonl "at the first prompt, not at spawn," so a
+    session nobody ever submits a first prompt to never gets a session_id and
+    never appears on the board.
+
+    Returns whether the text — and, when `submit`, the submit key — reached
+    the PTY. A failure here is not fatal to the spawn: the session is already
+    live and usable, so it is reported (`prompt_typed`/`prompt_submitted`)
+    rather than raised.
     """
     if not term.is_alive():
         return False
     time.sleep(_PROMPT_SETTLE_S)
+    payload = (
+        _chat_message_payload(prompt, term.harness)
+        if submit
+        else prompt.encode("utf-8")
+    )
     try:
-        term.write(prompt.encode("utf-8"))
+        term.write(payload)
     except OSError:
         return False
     return True
@@ -1249,8 +1263,12 @@ def make_handler(repo_root: str):
             v3.0 (ADR-0030) adds two optional fields:
               model  — pins the tier the session runs on, validated against the
                        lineup the *workspace* declares, never a list held here.
-              prompt — typed into the PTY and left unsent. The board prepares
-                       the work; a person still presses Enter.
+              prompt — typed into the PTY. When `model` is also given (the
+                       board's dispatch dialog is the only caller that sends
+                       both), the server submits it too (ADR-0034 §SD1,
+                       ADR-0038 §SD2) — the click on "สั่งงาน" already is the
+                       decision. Without `model`, the prompt is left unsent as
+                       before (ADR-0030 §SD3).
 
             ADR-0032 adds a third:
               effort — pins the thinking depth. Validated against the fixed set
@@ -1371,7 +1389,15 @@ def make_handler(repo_root: str):
                 return
             discovery.invalidate_cache(repo_root)
 
-            prompt_typed = _type_prompt(term, prompt) if prompt else False
+            # ADR-0034 §SD1 / ADR-0038 §SD2: model+prompt together is the one
+            # signature the board's dispatch dialog sends (DispatchDialog.tsx)
+            # — resume, prompt-less spawn, and chat's own _chat_message_payload
+            # path are untouched.
+            submit_prompt = bool(requested_model) and bool(prompt)
+            prompt_typed = (
+                _type_prompt(term, prompt, submit=submit_prompt) if prompt else False
+            )
+            prompt_submitted = prompt_typed and submit_prompt
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
             deadline = time.time() + 30
@@ -1393,6 +1419,7 @@ def make_handler(repo_root: str):
                         "model": requested_model,
                         "effort": requested_effort,
                         "prompt_typed": prompt_typed,
+                        "prompt_submitted": prompt_submitted,
                     },
                 )
             else:
@@ -1413,6 +1440,7 @@ def make_handler(repo_root: str):
                         "model": requested_model,
                         "effort": requested_effort,
                         "prompt_typed": prompt_typed,
+                        "prompt_submitted": prompt_submitted,
                         "message": "Session starting; retry to re-check.",
                     },
                 )

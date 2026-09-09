@@ -520,15 +520,35 @@ def test_resume_never_re_pins_effort(srv, monkeypatch, tmp_path):
     assert seen["effort"] is None, "a resume must not re-pin the effort"
 
 
-def test_prompt_is_typed_without_the_submit_key(srv):
-    """The whole point of the feature: the board fills the box, a person presses
-    Enter. One newline here would turn preparation into execution."""
+def test_prompt_is_typed_without_the_submit_key_when_not_submitting(srv):
+    """A resume/prompt-less/manual path: the board fills the box, a person
+    presses Enter. One newline here would turn preparation into execution."""
     term = _FakeTerm()
-    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2") is True
+    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2", submit=False) is True
     payload = b"".join(term.written)
     assert payload == "อ่าน slices.md แล้วทำ M2".encode("utf-8")
     assert not payload.endswith(b"\n")
     assert not payload.endswith(b"\r")
+
+
+def test_prompt_is_typed_and_submitted_on_the_dispatch_path(srv):
+    """ADR-0034 §SD1 / ADR-0038 §SD2: the board's own click already is the
+    decision, so the dispatch path submits — reusing the same payload
+    encoding chat uses, not a second implementation of the submit key."""
+    term = _FakeTerm()
+    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2", submit=True) is True
+    payload = b"".join(term.written)
+    assert payload == srv._chat_message_payload("อ่าน slices.md แล้วทำ M2", "claude")
+    assert payload.endswith(b"\n")
+
+
+def test_submit_key_matches_harness_on_the_dispatch_path(srv):
+    """codex submits with \\r, same as chat (`_chat_message_payload`) — the
+    dispatch path must not hardcode \\n regardless of harness."""
+    term = _FakeTerm()
+    term.harness = "codex"
+    srv._type_prompt(term, "hi", submit=True)
+    assert b"".join(term.written).endswith(b"\r")
 
 
 def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
@@ -541,4 +561,4 @@ def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
 def test_typing_into_a_dead_pty_reports_instead_of_raising(srv):
     """The session is already spawned by this point; a failed prompt is an empty
     input box, not a failed dispatch."""
-    assert srv._type_prompt(_FakeTerm(alive=False), "x") is False
+    assert srv._type_prompt(_FakeTerm(alive=False), "x", submit=False) is False

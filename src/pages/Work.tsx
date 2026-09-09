@@ -19,6 +19,7 @@ import {
 } from '../lib/project-filter';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
+import { useToast, ToastContainer } from '../components/shared/Toast';
 import './Work.css';
 
 /** Board columns, in reading order. Mirrors control_plane/workspace.py COLUMN_ORDER. */
@@ -60,6 +61,10 @@ export function WorkPage() {
   const [project, setProject] = useState<string | null>(() =>
     readProjectParam(window.location.search),
   );
+  // ADR-0038 §SD1 — a "stay" dispatch closes its dialog and toasts here
+  // instead of navigating away.
+  const { toasts, toast } = useToast();
+  const onDispatched = useCallback(() => toast('สั่งแล้ว'), [toast]);
 
   const pickProject = useCallback((name: string | null) => {
     setProject(name);
@@ -157,7 +162,7 @@ export function WorkPage() {
       {/* Above the picker on purpose: the calendar is the day, not a project
           (slices.md S20 §ง). Filtering it would hide blocks the owner still
           owes time to just because they belong to another piece of work. */}
-      <DayCalendar dispatch={data?.dispatch ?? null} />
+      <DayCalendar dispatch={data?.dispatch ?? null} onDispatched={onDispatched} />
 
       {data && data.projects.length > 0 && (
         <ProjectPicker
@@ -179,7 +184,14 @@ export function WorkPage() {
           />
         ))}
 
-      {picked && data && <SliceDialog {...picked} dispatch={data.dispatch} onClose={() => setPicked(null)} />}
+      {picked && data && (
+        <SliceDialog
+          {...picked}
+          dispatch={data.dispatch}
+          onClose={() => setPicked(null)}
+          onDispatched={onDispatched}
+        />
+      )}
       {grilling && data && (
         <GrillDialog
           project={grilling}
@@ -187,6 +199,7 @@ export function WorkPage() {
           onClose={() => setGrilling(null)}
         />
       )}
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }
@@ -257,11 +270,13 @@ function SliceDialog({
   slice,
   dispatch,
   onClose,
+  onDispatched,
 }: {
   project: WorkspaceProject;
   slice: WorkspaceSlice;
   dispatch: WorkspaceDispatch;
   onClose: () => void;
+  onDispatched?: () => void;
 }) {
   const shape = promptShapeFor(slice.column);
   return (
@@ -270,6 +285,7 @@ function SliceDialog({
       subject={slice.id !== '—' ? slice.id : project.name}
       dispatch={dispatch}
       preferredRole={slice.role ?? project.default_role}
+      onDispatched={onDispatched}
       notice={
         shape === 'prepare' ? (
           <p className="dlg-prepare">

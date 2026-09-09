@@ -29,13 +29,18 @@ interface Props {
   /** Set only for the grill button (ADR-0037 §SD2) — replaces the role-list
    *  picker with tier/effort dropdowns. Mutually exclusive with `fixedRole`. */
   tierPicker?: TierEffortPicker | null;
-  /** ADR-0037 §SD3 — grill opens a new tab and leaves `/work` where it is;
-   *  every other shape still replaces the current tab (ADR-0034/S13). Default
-   *  `"replace"`. */
-  openMode?: "replace" | "new-tab";
+  /** ADR-0037 §SD3 — grill opens a new tab and leaves `/work` where it is.
+   *  Every other shape opens no room at all (ADR-0038 §SD1) — dispatch is
+   *  fire-and-forget; the operator reopens the room later from the session
+   *  board, not from this dialog. Default `"stay"`. */
+  openMode?: "stay" | "new-tab";
   /** An extra paragraph above the prompt, for a shape that needs to say what
    *  it will not do. */
   notice?: ReactNode;
+  /** ADR-0038 §SD1 — called after a successful `"stay"` dispatch, once the
+   *  dialog has already closed. Not called for `"new-tab"` (grill), whose own
+   *  new tab is the confirmation. */
+  onDispatched?: () => void;
   compose: (role: DispatchRole) => string;
   onClose: () => void;
 }
@@ -43,15 +48,19 @@ interface Props {
 /**
  * Pick a role, read the prompt, send it (ADR-0030 §SD3).
  *
- * The prompt is shown in full and stays editable: it is typed into the session's
- * input box and left there unsent, so what the operator reads here is exactly
- * what they will press Enter on. Nothing starts running from this dialog.
+ * The prompt is shown in full and stays editable, so what the operator reads
+ * here is exactly what runs — for a `"stay"` dispatch (every shape but
+ * grill), the click on the send button *is* the decision to start
+ * (ADR-0034 §SD1): the server types it in and submits it, no tab opens, and
+ * this dialog just closes (ADR-0038 §SD1). Grill (`"new-tab"`) is the one
+ * shape that still leaves a room open, because it is a live conversation the
+ * operator sits through rather than a background dispatch (ADR-0037 §SD3).
  *
  * Deliberately ignorant of *what* it is dispatching. Three subjects reach it —
  * a slice in the `act` shape, a slice in the `prepare` shape (ADR-0036 §SD5),
  * and a ritual off a calendar bar (§SD4) — and each hands in its own composed
  * text. Keeping one dialog keeps one place that spawns a session, so the tier
- * pinning and the "we do not press Enter" promise cannot come apart per surface.
+ * pinning and the dispatch behavior cannot come apart per surface.
  */
 export function DispatchDialog({
   action,
@@ -60,8 +69,9 @@ export function DispatchDialog({
   preferredRole,
   fixedRole = null,
   tierPicker = null,
-  openMode = 'replace',
+  openMode = 'stay',
   notice,
+  onDispatched,
   compose,
   onClose,
 }: Props) {
@@ -109,27 +119,32 @@ export function DispatchDialog({
         effort: role.effort ?? undefined,
         prompt: text,
       });
-      // The session may not have an id yet — it gets one at the first prompt,
-      // which has not been sent. Carry the attach_key the server already
-      // issued for this PTY (ADR-0028 §SD1) so the terminal page's first WS
-      // connect attaches to it instead of spawning a second, blank PTY
-      // (risks.md S-11) — session_id, when present, is the stronger identity.
-      const params = new URLSearchParams({ view: 'terminal', harness: 'claude' });
-      if (res.session_id) {
-        params.set('session_id', res.session_id);
-      } else if (res.attach_key) {
-        params.set('attach_key', res.attach_key);
-      }
-      const url = `/agent?${params.toString()}`;
       if (openMode === 'new-tab') {
-        // ADR-0037 §SD3 — grill leaves /work in place; the owner needs the
-        // board and the grill room open at once, unlike every other shape's
-        // fire-and-forget dispatch (ADR-0034/S13).
-        window.open(url, '_blank');
+        // Grill has no row yet to reopen it from later (ADR-0037 §SD1), so it
+        // still needs the room dispatch just spawned. The session may not
+        // have an id yet — it gets one at the first prompt, and grill does
+        // not submit one (ADR-0038 §SD2 only submits the board's own
+        // dispatch signature). Carry the attach_key the server already
+        // issued for this PTY (ADR-0028 §SD1) so the terminal page's first WS
+        // connect attaches to it instead of spawning a second, blank PTY
+        // (risks.md S-11) — session_id, when present, is the stronger identity.
+        const params = new URLSearchParams({ view: 'terminal', harness: 'claude' });
+        if (res.session_id) {
+          params.set('session_id', res.session_id);
+        } else if (res.attach_key) {
+          params.set('attach_key', res.attach_key);
+        }
+        window.open(`/agent?${params.toString()}`, '_blank');
         setSending(false);
         onClose();
       } else {
-        window.location.href = url;
+        // ADR-0038 §SD1/§SD2 — every other shape stays on /work: the server
+        // already submitted the prompt (its first turn is what gives it a
+        // session_id and puts it on the board later), so there is no room to
+        // navigate to and no identity worth carrying here.
+        setSending(false);
+        onClose();
+        onDispatched?.();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'สั่งงานไม่สำเร็จ');
@@ -250,7 +265,10 @@ export function DispatchDialog({
             {notice}
 
             <label className="dlg-label" htmlFor="dispatch-prompt">
-              ข้อความที่จะพิมพ์ลงในห้อง — <b>ยังไม่กด Enter ให้</b>
+              ข้อความที่จะพิมพ์ลงในห้อง —{' '}
+              <b>
+                {openMode === 'new-tab' ? 'ยังไม่กด Enter ให้' : 'กด Enter ให้เองหลังพิมพ์'}
+              </b>
             </label>
             <textarea
               id="dispatch-prompt"
@@ -264,10 +282,17 @@ export function DispatchDialog({
 
             <div className="dlg-foot">
               <span className="dlg-note">
-                {openMode === 'new-tab'
-                  ? 'เปิดแท็บใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ — แท็บ /work นี้ยังอยู่ที่เดิม · '
-                  : 'เปิด session ใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ · '}
-                <b>คุณเป็นคนกด Enter</b>
+                {openMode === 'new-tab' ? (
+                  <>
+                    เปิดแท็บใหม่แล้วพิมพ์ข้อความนี้ค้างไว้ — แท็บ /work นี้ยังอยู่ที่เดิม ·{' '}
+                    <b>คุณเป็นคนกด Enter</b>
+                  </>
+                ) : (
+                  <>
+                    ไม่เปิดห้องให้ — สั่งแล้วเริ่มทำงานเลย ·{' '}
+                    <b>เข้าห้องได้จากบอร์ด session เมื่อไหร่ก็ได้</b>
+                  </>
+                )}
               </span>
               <button className="dlg-cancel" onClick={onClose}>
                 ยกเลิก
@@ -277,7 +302,11 @@ export function DispatchDialog({
                 onClick={send}
                 disabled={sending || !role}
               >
-                {sending ? 'กำลังเปิด…' : 'เปิดห้อง + พิมพ์ให้'}
+                {sending
+                  ? 'กำลังสั่ง…'
+                  : openMode === 'new-tab'
+                    ? 'เปิดห้อง + พิมพ์ให้'
+                    : 'สั่งงาน'}
               </button>
             </div>
           </>

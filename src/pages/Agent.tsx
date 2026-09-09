@@ -132,11 +132,14 @@ function flattenContent(blocks: RichContentBlock[] | undefined): string {
 export function AgentPage() {
   const qs = new URLSearchParams(location.search);
   const initialSessionId = qs.get('session_id');
-  // The dispatch flow (DispatchDialog) navigates here with an attach_key when
-  // it has no session_id yet — the server issued the key at spawn, before the
-  // PTY had prompted (ADR-0028 §SD1). Without seeding it here, this page's
-  // first WS connect carries no identity at all and spawns a second PTY
-  // instead of attaching to the one dispatch already prompted (risks.md S-11).
+  // Grill (ADR-0037 §SD3) is the only dispatch shape that still navigates
+  // here — every other shape stays on /work and never opens this page for
+  // its own dispatch (ADR-0038 §SD1). Grill's new-tab open carries an
+  // attach_key when it has no session_id yet — the server issued the key at
+  // spawn, before the PTY had prompted (ADR-0028 §SD1). Without seeding it
+  // here, this page's first WS connect carries no identity at all and spawns
+  // a second PTY instead of attaching to the one dispatch already prompted
+  // (risks.md S-11).
   const initialAttachKey = initialSessionId ? null : qs.get('attach_key');
   const harness = qs.get('harness') ?? 'claude';
   const provider = qs.get('provider');
