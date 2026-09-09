@@ -33,6 +33,8 @@ believed at the time and why it changed.
 | [0019](adr/0019-prebuilt-dist-for-constrained-hosts.md) | CI builds the UI; constrained hosts fetch the artifact |
 | [0020](adr/0020-rename-to-switchboard.md) | Why the project is called Switchboard |
 
+The index stops at 0020 on purpose — see **What is not here** below.
+
 ## Frontend architecture
 
 [`design/react-architecture.md`](design/react-architecture.md) — component
@@ -49,3 +51,11 @@ tree, state ownership, and where each piece of session state lives.
   rather than session-centric. Its ADRs are coupled to the authoring
   workspace's own tooling and are omitted; ADR-0001 onward describe the design
   that actually shipped.
+- **ADR-0021 and later.** They exist and are cited from the code — 0027 and 0028
+  by `server.py`, 0029 and 0030 by `control_plane/workspace.py` and the dispatch
+  path. They are written in the authoring workspace, in Thai, and lean on its
+  own conventions (worktree-per-task, the team-os role table, the daily grid),
+  so a reader here would get pages of context that do not describe this program.
+  A commit message that cites one always states the decision it carries, which
+  is the part that belongs in this repository. If you need the full record, ask
+  the maintainer rather than assuming the index above is the whole set.

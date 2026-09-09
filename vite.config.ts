@@ -11,6 +11,7 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         agent: resolve(__dirname, 'agent.html'),
         analytics: resolve(__dirname, 'analytics.html'),
+        work: resolve(__dirname, 'work.html'),
       },
     },
   },
@@ -26,6 +27,7 @@ export default defineConfig({
         ws: true,
       },
       '/analytics/files': 'http://localhost:8787',
+      '/workspace': 'http://localhost:8787',
     },
   },
 });

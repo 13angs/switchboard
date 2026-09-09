@@ -108,6 +108,22 @@ button.danger-action:hover:not(:disabled) {
   border-color: var(--blocked);
 }
 
+/* cross-page link to the Work board (v3.0, ADR-0029) */
+.page-link {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.page-link:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
 .notify-indicator {
   position: relative;
   display: inline-flex;

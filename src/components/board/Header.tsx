@@ -40,6 +40,9 @@ export const Header: FC<HeaderProps> = ({
           Archive
         </button>
       </div>
+      <a className="page-link" href="/work" title="Work — ชิ้นงานจาก slices.md">
+        Work
+      </a>
       <div className="notify-indicator" aria-live="polite" title="Browser tab alerts">
         Tab alerts
         {unreadApprovals > 0 && <span className="notify-badge">{unreadApprovals}</span>}

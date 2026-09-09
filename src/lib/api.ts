@@ -102,17 +102,55 @@ export async function fetchFileContent(
   return res.json();
 }
 
+export interface StartSessionOptions {
+  /** Pins the tier (ADR-0030). Omitting it inherits the model of whatever
+   *  launched the server — not a safer default, just an unstated one. */
+  model?: string;
+  /** Pins the thinking depth (ADR-0032) — `low`/`medium`/`high`/`xhigh`/`max`.
+   *  Fresh spawns only, same rule as `model`. */
+  effort?: string;
+  /** Typed into the PTY. Submitted too when `model` is also given — the
+   *  board's dispatch dialog signature (ADR-0034 §SD1, ADR-0038 §SD2) —
+   *  otherwise left unsent for a person to press Enter on. */
+  prompt?: string;
+}
+
+export interface StartSessionResponse {
+  session_id: string | null;
+  /** Server-issued identity for the PTY, present even before session_id is
+   *  known (ADR-0028 §SD1). Only grill's new-tab dispatch still carries this
+   *  to where it navigates next (ADR-0038 §SD3) — every other shape stays on
+   *  /work and has nothing to attach. */
+  attach_key: string | null;
+  session_started: boolean;
+  harness?: string;
+  provider?: string;
+  model?: string | null;
+  effort?: string | null;
+  prompt_typed?: boolean;
+  /** Whether the submit key reached the PTY too (ADR-0034 §SD4) — only
+   *  meaningful when `model` was given; `undefined`/`false` otherwise. Not
+   *  surfaced anywhere in the UI by design (ADR-0038 §SD4). */
+  prompt_submitted?: boolean;
+  message?: string;
+}
+
 export async function startSession(
   harness: string,
   provider: string,
-  label?: string
-): Promise<{ session_id: string | null; session_started: boolean }> {
+  label?: string,
+  options?: StartSessionOptions
+): Promise<StartSessionResponse> {
   const res = await fetch(`${BASE}/session/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ harness, provider, label }),
+    body: JSON.stringify({ harness, provider, label, ...options }),
   });
-  return res.json();
+  const data = await res.json().catch(() => null);
+  // The spawn path rejects an unknown model rather than quietly ignoring it —
+  // surface that instead of returning a body with no session in it.
+  if (!res.ok) throw new Error(data?.error || `session/start ${res.status}`);
+  return data as StartSessionResponse;
 }
 
 // ── Analytics (v2.5) ──
@@ -151,5 +189,132 @@ export async function fetchAnalytics(
     `${BASE}/analytics/files?days=${days}&harness=${encodeURIComponent(harness)}`
   );
   if (!res.ok) throw new Error(`analytics ${res.status}`);
+  return res.json();
+}
+
+// ── Workspace overview (v3.0, ADR-0029) ──
+
+export interface WorkspaceSlice {
+  id: string;
+  title: string;
+  day: string;
+  column: string;
+  note: string;
+  /** Effective role for this row — its own `role` column cell when the file
+   *  has one and it resolves, else the project's `default_role` (ADR-0035). */
+  role: string | null;
+}
+
+export interface WorkspaceProject {
+  name: string;
+  slices: WorkspaceSlice[];
+  columns: Record<string, number>;
+  /** From the project's own slices.md frontmatter — used to build the Assignment id. */
+  client: string;
+  team: string;
+  /** The `dispatch.roles[].role` this project's `team:` resolves to, or null
+   *  when it does not match a known role or discipline (ADR-0033). */
+  default_role: string | null;
+  has: { scope: boolean; risks: boolean; hld: boolean };
+}
+
+/** Role → tier → model, read from the workspace (ADR-0030 §SD1). Never held here. */
+export type WorkspaceDispatch =
+  | { present: false; reason: string }
+  | {
+      present: true;
+      tiers: Record<string, string>;
+      roles: { role: string; tier: string; model: string; effort: string | null }[];
+      source: { tiers: string; roles: string };
+    };
+
+export interface WorkspaceResponse {
+  generated_at: string;
+  repo: string;
+  head: string;
+  stale_by: string;
+  projects: WorkspaceProject[];
+  totals: {
+    projects_with_slices: number;
+    slices: Record<string, number>;
+  };
+  gaps:
+    | { present: false }
+    | { present: true; total: number; closed: number; reduced: number; open: number };
+  dispatch: WorkspaceDispatch;
+}
+
+
+export async function fetchWorkspace(refresh = false): Promise<WorkspaceResponse> {
+  const res = await fetch(`${BASE}/workspace${refresh ? '?refresh=1' : ''}`);
+  if (!res.ok) throw new Error(`workspace ${res.status}`);
+  return res.json();
+}
+
+// ── Daily calendar (slices.md S9) ──
+
+/** One row of team-os/ways-of-working/rituals.md § เจ้าของของแต่ละจังหวะ —
+ *  the second register the board may dispatch from (ADR-0036 §SD1).
+ *  `dispatchable` is false when `role`, `client` or the office behind them did
+ *  not resolve; the board then shows the row and *why*, and no button — there
+ *  is no default for any of those fields (§SD3). */
+export interface Ritual {
+  key: string;
+  name: string;
+  role: string | null;
+  client: string;
+  office: string | null;
+  /** `<client>/<office>/<role>/<key>` — four full segments, no `-` (§SD3). */
+  assignment: string | null;
+  /** Where the ritual is defined (runbook + step numbers), workspace-relative. */
+  reads: string;
+  dispatchable: boolean;
+  missing: string[];
+}
+
+export interface ScheduleBlock {
+  start: string; // "HH:MM"
+  end: string; // "HH:MM"
+  label: string;
+  domain: string;
+  minutes: number | null;
+  /** The ritual this bar carries, or null when its label names no key. */
+  ritual: Ritual | null;
+  /** Keys that all matched this one label — the bar gets no button, because
+   *  choosing between them would be a guess (ADR-0036 §SD2). */
+  ritual_conflict: string[] | null;
+}
+
+export interface DaySchedule {
+  date: string; // "YYYY-MM-DD"
+  present: boolean;
+  blocks: ScheduleBlock[];
+  /** Rituals that declare a key but matched no bar this day (ADR-0036 §SD6).
+   *  Read from the day's *plan* — it does not mean "not run yet". */
+  unmapped: Ritual[];
+}
+
+export interface CalendarResponse {
+  center: string;
+  days: DaySchedule[];
+  rituals: {
+    present: boolean;
+    reason: string;
+    source: string;
+    declared: number;
+  };
+}
+
+export async function fetchCalendar(
+  center?: string,
+  before = 2,
+  after = 2,
+): Promise<CalendarResponse> {
+  const qs = new URLSearchParams();
+  if (center) qs.set('date', center);
+  qs.set('before', String(before));
+  qs.set('after', String(after));
+  const res = await fetch(`${BASE}/calendar?${qs.toString()}`);
+  if (!res.ok) throw new Error(`calendar ${res.status}`);
   return res.json();
 }
