@@ -449,18 +449,25 @@ def test_unverified_harness_still_builds_without_a_model(tmp_path):
 class _FakeTerm:
     """Stands in for a PTY. Records what was written; never appends anything."""
 
-    def __init__(self, alive: bool = True):
+    def __init__(self, alive: bool = True, session_id_after_writes: int | None = None):
         self.written: list[bytes] = []
         self._alive = alive
         self.attach_key = None
         self.harness = "claude"
         self.session_id = None
+        # S24: simulates `_start_id_capture`'s background poll discovering the
+        # jsonl only after the Nth byte write actually lands the first turn.
+        self._session_id_after_writes = session_id_after_writes
 
     def is_alive(self) -> bool:
         return self._alive
 
     def write(self, data: bytes) -> None:
         self.written.append(data)
+        if self._session_id_after_writes is not None and (
+            len(self.written) >= self._session_id_after_writes
+        ):
+            self.session_id = "session-discovered"
 
     def start_reader(self, *_a, **_kw) -> None:
         pass
@@ -475,6 +482,8 @@ def srv(monkeypatch):
     import server  # noqa: PLC0415
 
     monkeypatch.setattr(server, "_PROMPT_SETTLE_S", 0)
+    monkeypatch.setattr(server, "_SUBMIT_RETRY_INTERVAL_S", 0)
+    monkeypatch.setattr(server, "_SUBMIT_RETRY_WINDOW_S", 0.5)
     server._registry.clear()
     yield server
     server._registry.clear()
@@ -520,35 +529,19 @@ def test_resume_never_re_pins_effort(srv, monkeypatch, tmp_path):
     assert seen["effort"] is None, "a resume must not re-pin the effort"
 
 
-def test_prompt_is_typed_without_the_submit_key_when_not_submitting(srv):
-    """A resume/prompt-less/manual path: the board fills the box, a person
-    presses Enter. One newline here would turn preparation into execution."""
+def test_prompt_is_typed_without_a_submit_key(srv):
+    """`_type_prompt` never appends the submit key any more (S24) — bundling
+    text + submit into one `term.write()` is exactly what made the harness's
+    TUI read the whole thing as a bracketed paste instead of a keypress, so
+    the trailing byte landed inside the pasted text rather than submitting
+    it. Resume/prompt-less/manual dispatch relies on this: the board fills
+    the box, a person presses Enter."""
     term = _FakeTerm()
-    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2", submit=False) is True
+    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2") is True
     payload = b"".join(term.written)
     assert payload == "อ่าน slices.md แล้วทำ M2".encode("utf-8")
     assert not payload.endswith(b"\n")
     assert not payload.endswith(b"\r")
-
-
-def test_prompt_is_typed_and_submitted_on_the_dispatch_path(srv):
-    """ADR-0034 §SD1 / ADR-0038 §SD2: the board's own click already is the
-    decision, so the dispatch path submits — reusing the same payload
-    encoding chat uses, not a second implementation of the submit key."""
-    term = _FakeTerm()
-    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2", submit=True) is True
-    payload = b"".join(term.written)
-    assert payload == srv._chat_message_payload("อ่าน slices.md แล้วทำ M2", "claude")
-    assert payload.endswith(b"\n")
-
-
-def test_submit_key_matches_harness_on_the_dispatch_path(srv):
-    """codex submits with \\r, same as chat (`_chat_message_payload`) — the
-    dispatch path must not hardcode \\n regardless of harness."""
-    term = _FakeTerm()
-    term.harness = "codex"
-    srv._type_prompt(term, "hi", submit=True)
-    assert b"".join(term.written).endswith(b"\r")
 
 
 def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
@@ -561,4 +554,69 @@ def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
 def test_typing_into_a_dead_pty_reports_instead_of_raising(srv):
     """The session is already spawned by this point; a failed prompt is an empty
     input box, not a failed dispatch."""
-    assert srv._type_prompt(_FakeTerm(alive=False), "x", submit=False) is False
+    assert srv._type_prompt(_FakeTerm(alive=False), "x") is False
+
+
+# ── S24 / ADR-0038 amendment: the submit key is its own write, retried on
+# evidence (`term.session_id`), never bundled with the prompt text ──────────
+
+
+def test_submit_key_is_its_own_write_not_bundled_with_the_prompt(srv):
+    """The bug `S24` found: one `term.write()` carrying prompt text plus a
+    trailing submit byte is read by the harness's TUI as a bracketed paste,
+    so the byte becomes a literal newline inside the pasted text instead of
+    submitting it. `_type_prompt` and `_submit_typed_prompt` must never be
+    collapsed back into a single write."""
+    term = _FakeTerm(session_id_after_writes=2)
+    assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2") is True
+    assert srv._submit_typed_prompt(term) is True
+    assert term.written == [
+        "อ่าน slices.md แล้วทำ M2".encode("utf-8"),
+        srv._chat_message_payload("", "claude"),
+    ]
+
+
+def test_submit_key_matches_harness(srv):
+    """codex submits with \\r, same as chat (`_chat_message_payload`) — the
+    dispatch path must not hardcode \\n regardless of harness."""
+    term = _FakeTerm(session_id_after_writes=1)
+    term.harness = "codex"
+    srv._submit_typed_prompt(term)
+    assert b"".join(term.written).endswith(b"\r")
+
+
+def test_submit_retries_the_enter_key_until_a_session_id_appears(srv):
+    """A single press can be lost (e.g. the TUI genuinely was not ready yet,
+    `risks.md S-03`) — retrying only the submit key is safe because an extra
+    Enter into an already-empty input box is a no-op. `_submit_typed_prompt`
+    must keep pressing until `_start_id_capture`'s poll proves a first turn
+    landed, not give up after one attempt."""
+    term = _FakeTerm(session_id_after_writes=3)
+    assert srv._submit_typed_prompt(term) is True
+    assert len(term.written) == 3
+    assert all(w == srv._chat_message_payload("", "claude") for w in term.written)
+
+
+def test_submit_gives_up_after_the_retry_window_with_no_evidence(srv):
+    """If the harness never actually accepts a first turn (e.g. it crashed
+    before ever reading the box), retrying forever would keep firing Enter
+    at a session that is never coming back — `prompt_submitted` must report
+    False on real evidence, not swallow the failure by retrying past its
+    budget."""
+    term = _FakeTerm()  # session_id never appears
+    assert srv._submit_typed_prompt(term) is False
+    assert len(term.written) > 1, "must have retried, not given up after one press"
+
+
+def test_submit_stops_retrying_once_the_pty_dies(srv):
+    """A PTY that exits mid-retry must not be written to again."""
+
+    class _DyingTerm(_FakeTerm):
+        def write(self, data: bytes) -> None:
+            super().write(data)
+            if len(self.written) >= 2:
+                self._alive = False
+
+    term = _DyingTerm()
+    assert srv._submit_typed_prompt(term) is False
+    assert len(term.written) == 2

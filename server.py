@@ -290,41 +290,80 @@ def _chat_message_payload(text: str, harness_name: str) -> bytes:
 # it. Below this the keystrokes land before the box exists and are swallowed.
 _PROMPT_SETTLE_S = 1.5
 
+# How long to keep re-pressing the submit key on the dispatch path, and how
+# often (S24 / ADR-0038 amendment below). Retrying is only safe for the
+# submit key itself — retrying the prompt text would duplicate it visibly in
+# the input box — so `_type_prompt` never appends it; `_submit_typed_prompt`
+# owns the keypress and its own retry budget.
+_SUBMIT_RETRY_INTERVAL_S = 1.0
+_SUBMIT_RETRY_WINDOW_S = 8.0
 
-def _type_prompt(term: terminal.PtyTerminal, prompt: str, *, submit: bool) -> bool:
-    """Type a prepared prompt into a fresh PTY.
 
-    `submit=False` — the submit key is withheld on purpose (ADR-0030 §SD3).
-    Deciding that the work should actually start is a person's; `prompt` sits
-    in the input box unsent.
+def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
+    """Type a prepared prompt's text into a fresh PTY. Never appends a submit
+    key (ADR-0030 §SD3) — a resume/prompt-less/manual dispatch leaves it in
+    the input box unsent; the dispatch path presses Enter itself afterward,
+    via `_submit_typed_prompt`, as its own write (S24 — see that function's
+    docstring for why the two must not share one `term.write()` call).
 
-    `submit=True` (ADR-0034 §SD1, implemented at ADR-0038 §SD2) — the click on
-    the board's "สั่งงาน" button already *is* that decision (ADR-0034's own
-    argument), so this path appends the harness's submit key itself, via the
-    same `_chat_message_payload` the chat path uses. This is what makes a
-    dispatched session reachable later from the board at all: per ADR-0028,
-    the harness writes its jsonl "at the first prompt, not at spawn," so a
-    session nobody ever submits a first prompt to never gets a session_id and
-    never appears on the board.
-
-    Returns whether the text — and, when `submit`, the submit key — reached
-    the PTY. A failure here is not fatal to the spawn: the session is already
-    live and usable, so it is reported (`prompt_typed`/`prompt_submitted`)
-    rather than raised.
+    Returns whether the text reached the PTY. A failure here is not fatal to
+    the spawn: the session is already live and usable, so it is reported
+    (`prompt_typed`) rather than raised.
     """
     if not term.is_alive():
         return False
     time.sleep(_PROMPT_SETTLE_S)
-    payload = (
-        _chat_message_payload(prompt, term.harness)
-        if submit
-        else prompt.encode("utf-8")
-    )
     try:
-        term.write(payload)
+        term.write(prompt.encode("utf-8"))
     except OSError:
         return False
     return True
+
+
+def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
+    """Press Enter for a prompt `_type_prompt` already typed (ADR-0034 §SD1,
+    implemented at ADR-0038 §SD2 — this function is `S24`'s amendment to
+    that implementation, not a new decision).
+
+    `_type_prompt` used to hand the prompt text and the submit key to
+    `term.write()` **together**, reusing `_chat_message_payload`. `S24` found
+    that a single write carrying an embedded trailing `\\r`/`\\n` is exactly
+    what the harness's TUI reads as a bracketed paste, not a keypress: the
+    whole chunk lands in the input box as `[Pasted text …]` and the trailing
+    byte becomes a literal newline *inside* that pasted text instead of
+    submitting it. No first turn ever reaches the harness, so it never writes
+    the jsonl that gives the session a `session_id` (ADR-0028) — the session
+    is spawned but permanently invisible to the board.
+
+    The fix is to never bundle the two again: the submit key goes in its own
+    `term.write()`, using the same `_chat_message_payload` encoding (empty
+    text, so only the submit byte(s) survive) — reused, not reimplemented.
+
+    One write is still not enough to trust blindly — `_PROMPT_SETTLE_S` is an
+    observed guess, not a signal that the TUI is actually ready
+    (`risks.md S-03`), and a slow `SessionStart` hook can outlast it. Retrying
+    the *text* would duplicate it on screen, but retrying only the submit key
+    is safe: an extra `\\r`/`\\n` into an already-submitted, now-empty input
+    box is a no-op. So this re-presses Enter every `_SUBMIT_RETRY_INTERVAL_S`
+    until the harness's own jsonl proves the turn actually landed — read via
+    `term.session_id`, which `_start_id_capture`'s background poll (started
+    at spawn, already running by the time this executes) sets the moment it
+    finds that jsonl — capped at `_SUBMIT_RETRY_WINDOW_S`. Evidence of a first
+    turn decides when to stop, not elapsed time.
+
+    Returns whether that evidence showed up before the window closed. This is
+    the value `prompt_submitted` reports — bytes reaching the PTY is no
+    longer sufficient to claim a submit happened.
+    """
+    submit_key = _chat_message_payload("", term.harness)
+    deadline = time.time() + _SUBMIT_RETRY_WINDOW_S
+    while term.is_alive() and term.session_id is None and time.time() < deadline:
+        try:
+            term.write(submit_key)
+        except OSError:
+            return False
+        time.sleep(_SUBMIT_RETRY_INTERVAL_S)
+    return term.session_id is not None
 
 
 def _transcript_source(
@@ -1266,9 +1305,10 @@ def make_handler(repo_root: str):
               prompt — typed into the PTY. When `model` is also given (the
                        board's dispatch dialog is the only caller that sends
                        both), the server submits it too (ADR-0034 §SD1,
-                       ADR-0038 §SD2) — the click on "สั่งงาน" already is the
-                       decision. Without `model`, the prompt is left unsent as
-                       before (ADR-0030 §SD3).
+                       ADR-0038 §SD2, amended by S24 — see
+                       `_submit_typed_prompt`) — the click on "สั่งงาน" already
+                       is the decision. Without `model`, the prompt is left
+                       unsent as before (ADR-0030 §SD3).
 
             ADR-0032 adds a third:
               effort — pins the thinking depth. Validated against the fixed set
@@ -1394,10 +1434,14 @@ def make_handler(repo_root: str):
             # — resume, prompt-less spawn, and chat's own _chat_message_payload
             # path are untouched.
             submit_prompt = bool(requested_model) and bool(prompt)
-            prompt_typed = (
-                _type_prompt(term, prompt, submit=submit_prompt) if prompt else False
+            prompt_typed = _type_prompt(term, prompt) if prompt else False
+            # S24: bytes reaching the PTY (`prompt_typed`) is not evidence the
+            # harness accepted a first turn — `_submit_typed_prompt` presses
+            # Enter as its own write and only reports True once the harness's
+            # jsonl proves it landed.
+            prompt_submitted = (
+                _submit_typed_prompt(term) if prompt_typed and submit_prompt else False
             )
-            prompt_submitted = prompt_typed and submit_prompt
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
             deadline = time.time() + 30
