@@ -318,3 +318,62 @@ export async function fetchCalendar(
   if (!res.ok) throw new Error(`calendar ${res.status}`);
   return res.json();
 }
+
+// ── Role participation (ADR-0039) ──
+
+/** One of the 7 roles of `roles.md § แกนความเป็นเจ้าของ` — always all seven,
+ *  including the ones that shipped nothing: `0 / 0` is the answer S26 asks for,
+ *  so it has to be a row rather than an absence (§SD2). */
+export interface RoleActivityRow {
+  /** Slug as it appears in the third slot of an `Assignment:` id. */
+  role: string;
+  office: string | null;
+  /** `direct + legacy` — commits in the window, not pieces of work (§ เสีย). */
+  commits: number;
+  /** The id already named one of the 7 roles. */
+  direct: number;
+  /** The id named a `team/` discipline (every id before the 2026-09-05
+   *  cutover does) and was resolved through the board's own resolver (§SD3). */
+  legacy: number;
+  /** Which discipline slugs the `legacy` count came from, and how many each. */
+  legacy_slugs: Record<string, number>;
+  /** Rows still open, per board column. `todo` leads; `owner` is printed
+   *  separately because the 🖐️ mark beats the status glyph (§SD6). */
+  open: Record<string, number>;
+  open_total: number;
+  /** No commits *and* no open rows — the gap G-25 went looking for. */
+  silent: boolean;
+}
+
+export interface RoleActivityRepo {
+  /** Workspace-relative, `.` for the workspace itself. */
+  path: string;
+  commits: number;
+  /** The difference from `commits` is what no role was credited for (§SD5). */
+  with_assignment: number;
+}
+
+export type RoleActivityResponse =
+  | { present: false; reason: string; source: string; repo: string }
+  | {
+      present: true;
+      generated_at: string;
+      repo: string;
+      source: string;
+      window: { days: number; since: string; tz: string };
+      roles: RoleActivityRow[];
+      repos: RoleActivityRepo[];
+      unresolved: {
+        count: number;
+        samples: { sha: string; repo: string; assignment: string }[];
+      };
+      open_unassigned: Record<string, number>;
+      totals: { commits: number; with_assignment: number };
+    };
+
+export async function fetchRoleActivity(days: number): Promise<RoleActivityResponse> {
+  const res = await fetch(`${BASE}/roles/activity?days=${days}`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `roles/activity ${res.status}`);
+  return data as RoleActivityResponse;
+}

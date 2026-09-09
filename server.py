@@ -23,6 +23,9 @@ Endpoints:
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
     GET  /calendar?date=&before=&after= -> {days:[{date, present, blocks[], unmapped[]}]}
                                          (slices.md S9; bars carry their ritual per ADR-0036)
+    GET  /roles/activity?days=         -> {roles[], repos[], unresolved, totals} (ADR-0039)
+                                         commits shipped per role, paired with rows
+                                         still open; 7 roles always, zeros included
     GET  /session/<id>/transcript     -> {session_id, messages:[{role,text,ts}]}  (?since= optional)
     GET  /session/<id>/timeline       -> {session_id, harness, entries:[{tool, category,
                                          args_summary, args, ts, duration_ms,
@@ -85,6 +88,7 @@ from control_plane import (
     lock,
     notifications,
     pricing,
+    role_activity,
     state,
     terminal,
     workspace,
@@ -1011,6 +1015,8 @@ def make_handler(repo_root: str):
                 self._workspace(repo_root)
             elif path == "/calendar":
                 self._calendar(repo_root)
+            elif path == "/roles/activity":
+                self._role_activity(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -1216,6 +1222,31 @@ def make_handler(repo_root: str):
                     },
                 },
             )
+
+        def _role_activity(self, repo_root: str):
+            """GET /roles/activity — commits per role vs rows still open (ADR-0039).
+
+            The board's third data source, and the only one that reads history
+            rather than the tree. Not HEAD-cached like /workspace: the answer is
+            a function of the *window*, not of one commit, and the whole scan
+            measured 0.47s over ~1,300 commits (ADR-0039 §SD7).
+            """
+            qs = parse_qs(urlparse(self.path).query)
+            raw = (qs.get("days") or [""])[0]
+            if raw:
+                try:
+                    days = int(raw)
+                except ValueError:
+                    self._json(400, {"error": "days must be an integer"})
+                    return
+            else:
+                days = role_activity.DEFAULT_DAYS
+            try:
+                self._json(200, role_activity.role_activity(repo_root, days))
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
 
         def _timeline(self, session_id: str, repo_root: str):
             """ADR-0017 §SD1 — tool calls for one session, on demand.

@@ -82,8 +82,22 @@
   color: var(--faint);
   margin-left: 4px;
 }
-.work-subbar .refresh {
+.work-subbar .participation {
   margin-left: auto;
+  padding: 4px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.work-subbar .participation:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.work-subbar .refresh {
   padding: 4px 11px;
   border-radius: 6px;
   border: 1px solid var(--line);
@@ -925,4 +939,143 @@
 }
 .dlg-ritual b {
   color: var(--fg);
+}
+
+/* ── role participation panel (ADR-0039) ── */
+.dlg.ra {
+  width: min(760px, 100%);
+}
+.ra-windows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ra-win {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ra-win.on {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ra-win:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ra-since {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ra-since code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.ra-loading {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ra-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ra-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 118px 138px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+}
+.ra-row:first-child {
+  border-top: 0;
+}
+.ra-head {
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+}
+.ra-role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.ra-role b {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ra-role em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--faint);
+}
+.ra-num {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.ra-num b {
+  font-size: 14px;
+  color: var(--fg);
+}
+.ra-num em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--faint);
+}
+.ra-row.silent {
+  background: color-mix(in srgb, var(--warn, #d08b2c) 10%, transparent);
+}
+.ra-gap {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--accent-ink);
+  border: 1px solid var(--accent);
+}
+.ra-prov {
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+.ra-prov h4 {
+  margin: 0 0 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+.ra-prov ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ra-prov li {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ra-prov code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.ra-prov .warn,
+.ra-prov b.warn {
+  color: var(--accent-ink);
 }
