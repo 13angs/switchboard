@@ -19,6 +19,7 @@ import {
 } from '../lib/project-filter';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
+import { RoleActivityDialog } from './RoleActivity';
 import { useToast, ToastContainer } from '../components/shared/Toast';
 import './Work.css';
 
@@ -55,6 +56,9 @@ export function WorkPage() {
     slice: WorkspaceSlice;
   } | null>(null);
   const [grilling, setGrilling] = useState<WorkspaceProject | null>(null);
+  // ADR-0039 — the participation panel reads git log, so it is opened by a
+  // press and never on load: nothing about it belongs in the board's own fetch.
+  const [measuring, setMeasuring] = useState(false);
   // The board shows one project at a time, and which one lives in the URL so a
   // tab can be pinned to it (slices.md S20 §ก–§ข). Read once: nothing else
   // rewrites the query string, and the picker below keeps both in step.
@@ -124,6 +128,12 @@ export function WorkPage() {
             </span>
           </span>
         )}
+        <button
+          className="participation"
+          onClick={() => setMeasuring(true)}
+        >
+          การมีส่วนร่วมต่อ role
+        </button>
         <button
           className="refresh"
           onClick={() => load(true)}
@@ -199,6 +209,7 @@ export function WorkPage() {
           onClose={() => setGrilling(null)}
         />
       )}
+      {measuring && <RoleActivityDialog onClose={() => setMeasuring(false)} />}
       <ToastContainer toasts={toasts} />
     </div>
   );
