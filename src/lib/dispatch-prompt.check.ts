@@ -10,6 +10,7 @@ import {
   composeRitualPrompt,
   composeGrillPrompt,
   composeFillGapsPrompt,
+  composeRoleGapPrompt,
   assignmentId,
   promptShapeFor,
   dispatchLabel,
@@ -380,5 +381,98 @@ assert(
 // A project missing scope.md is not told to read it here either.
 const fgBare = composeFillGapsPrompt(bare, gaps, grillRole);
 assert(!fgBare.includes(`projects/${bare.name}/scope.md`), "absent scope.md not cited in fill-gaps");
+
+// ── the fifth shape: a role closing its own §7.2 line (ADR-0042 §SD5) ──
+
+const devopsRole: DispatchRole = {
+  role: "DevOps",
+  tier: "standard",
+  model: "claude-sonnet-5",
+  effort: "medium",
+};
+const fileGap = {
+  role: "DevOps",
+  slug: "devops",
+  rows: 3,
+  closes: "ปล่อยของจริงแล้ว · ทางปิดกลับใช้ได้จริง",
+  note: "หรือใบที่ทำหน้าที่นั้นอยู่แล้วใต้ชื่ออื่น (§ 7.3)",
+  surfaces: [{ token: "rollout.md", level: "project", present: false }],
+  missing: ["rollout"],
+};
+const rg = composeRoleGapPrompt(project, fileGap, devopsRole);
+
+assert(
+  rg.includes("ปล่อยของจริงแล้ว") && rg.includes("§ 7.3"),
+  "the subject is the role's own §7.2 line, quoted — not a slice title",
+);
+assert(
+  rg.includes("`rollout.md`"),
+  "the surface the board measured missing is named, not re-derived",
+);
+assert(
+  rg.includes(`Assignment: ${project.client}/-/devops/`),
+  "the id carries the role the button locked, in the third slot",
+);
+assert(
+  !rg.includes("Team-Slug-Approved"),
+  "no per-turn green light: `devops` is one of the 7, not a team/ slug (§SD5)",
+);
+// The three sentences that stand between a measured 0/33 and six empty files.
+assert(rg.includes("ห้ามสร้างไฟล์ที่ยังไม่มีเนื้อจริง"), "empty-file bar is stated");
+assert(
+  rg.includes("reply-bot-reopen-contract.md"),
+  "§7.3's real precedent is cited so 'another file already does this' is a live option",
+);
+assert(
+  rg.includes(`แก้ได้เฉพาะใต้ \`projects/${project.name}/\``),
+  "the blast radius is one project — the reason a loop over six is not this session's job",
+);
+assert(
+  rg.includes("การไล่เติมให้ครบเป็นงานคนละใบที่เจ้าของกดเอง"),
+  "…and the prompt says why, rather than leaving the session to infer it",
+);
+for (const f of [
+  "team-os/ways-of-working/definition-of-done.md",
+  "team-os/ways-of-working/stuck-rule.md",
+  "team-os/decisions/README.md",
+])
+  assert(rg.includes(f), `${f} cited in the role-gap prompt too`);
+assert(rg.includes("ย้อนกลับได้"), "the central rules ride along here too");
+
+// A role with rows but no missing file, and a role with neither: the deliverable
+// line is the half that differs, so it must not be the same sentence twice.
+const rowGap = {
+  role: "QA",
+  slug: "qa",
+  rows: 0,
+  closes: "รอบตรวจระดับโปรเจกต์",
+  note: "thread ของ PR ใบนี้",
+  surfaces: [],
+  missing: [],
+};
+const rgRows = composeRoleGapPrompt(project, rowGap, devopsRole);
+assert(
+  rgRows.includes("0 แถว") && rgRows.includes("slices.md"),
+  "a role with no row is asked for rows",
+);
+assert(
+  rgRows.includes("ไม่ใช่ไฟล์ในโปรเจกต์"),
+  "a signature that is not a file says so — the session cannot close that line here",
+);
+assert(
+  !rgRows.includes("`rollout.md`"),
+  "and it is never handed another role's file",
+);
+assert(
+  rgRows.includes("Assignment: winona/-/qa/"),
+  "the id follows the row's role, not the dialog's default",
+);
+
+// A project missing scope.md is not told to read it here either.
+const rgBare = composeRoleGapPrompt(bare, fileGap, devopsRole);
+assert(
+  !rgBare.includes(`projects/${bare.name}/scope.md`),
+  "absent scope.md not cited in the role-gap prompt",
+);
 
 console.log("dispatch-prompt check: OK");

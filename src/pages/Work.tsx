@@ -10,10 +10,16 @@ import {
   composePrompt,
   composeGrillPrompt,
   composeFillGapsPrompt,
+  composeRoleGapPrompt,
   promptShapeFor,
   dispatchLabel,
 } from '../lib/dispatch-prompt';
-import { projectGaps, type ProjectGaps } from '../lib/project-gaps';
+import {
+  projectGaps,
+  projectRoleGaps,
+  type ProjectGaps,
+  type RoleGapRow,
+} from '../lib/project-gaps';
 import { ProjectGapsDialog } from './ProjectGaps';
 import {
   readProjectParam,
@@ -66,6 +72,13 @@ export function WorkPage() {
   const [filling, setFilling] = useState<{
     project: WorkspaceProject;
     gaps: ProjectGaps;
+  } | null>(null);
+  // ADR-0042 §SD4 — one row of the gap panel, handed to the role that owns it.
+  // Separate state from `filling` because they dispatch different roles at
+  // different tiers: this one is a role out of roles.md, that one is `forge`.
+  const [closing, setClosing] = useState<{
+    project: WorkspaceProject;
+    row: RoleGapRow;
   } | null>(null);
   // ADR-0039 · ADR-0041 — the belt panel reads git log for its fourth column,
   // so it is opened by a press and never on load: nothing about it belongs in
@@ -200,7 +213,7 @@ export function WorkPage() {
           <ProjectBoard
             key={p.name}
             project={p}
-            dispatch={data.dispatch}
+            data={data}
             onDispatch={(slice) => setPicked({ project: p, slice })}
             onGrill={() => setGrilling(p)}
             onGaps={() => setGapsFor(p)}
@@ -231,6 +244,19 @@ export function WorkPage() {
             setFilling({ project: gapsFor, gaps });
             setGapsFor(null);
           }}
+          onDispatchRole={(row) => {
+            setClosing({ project: gapsFor, row });
+            setGapsFor(null);
+          }}
+        />
+      )}
+      {closing && data && (
+        <RoleGapDialog
+          project={closing.project}
+          row={closing.row}
+          dispatch={data.dispatch}
+          onClose={() => setClosing(null)}
+          onDispatched={onDispatched}
         />
       )}
       {filling && data && (
@@ -443,6 +469,69 @@ function FillGapsDialog({
   );
 }
 
+/**
+ * One row of the gap panel, handed to the role that owns it (ADR-0042 §SD4).
+ *
+ * The opposite end of the dialog's range from `GrillDialog`: grill has no row
+ * to resolve a role from and so picks a tier by hand (ADR-0037 §SD2), while
+ * this row *is* a role — `sop-pipeline-handoff.md § 7.2` wrote its name — so
+ * the tier comes off the roles.md table like every slice dispatch, and the
+ * picker is locked to that one role. Swapping it would run the session under an
+ * `Assignment:` id naming somebody else, which is the reason `fixedRole` exists
+ * (ADR-0036 §SD3).
+ *
+ * `openMode` stays the default: this is a role doing its own work in the
+ * background, not the live conversation grill is (ADR-0038 §SD1).
+ */
+function RoleGapDialog({
+  project,
+  row,
+  dispatch,
+  onClose,
+  onDispatched,
+}: {
+  project: WorkspaceProject;
+  row: RoleGapRow;
+  dispatch: WorkspaceDispatch;
+  onClose: () => void;
+  onDispatched?: () => void;
+}) {
+  const files = row.surfaces.filter(
+    (s) => s.level === 'project' && s.present === false,
+  );
+  return (
+    <DispatchDialog
+      action="ปิดช่องที่ขาด"
+      subject={`${row.slug} · ${project.name}`}
+      dispatch={dispatch}
+      preferredRole={row.role}
+      fixedRole={{
+        role: row.role,
+        why: `แถวนี้เขียนชื่อเจ้าของไว้แล้ว — ${row.slug} เป็น role ที่ § 7.2 ให้เซ็นบรรทัดนี้ ⇒ สลับ role ไม่ได้`,
+      }}
+      onDispatched={onDispatched}
+      notice={
+        <p className="dlg-grill">
+          {files.length > 0 ? (
+            <>
+              session นี้อาจ<b>สร้างไฟล์ใหม่</b> ({files.map((s) => s.token).join(' · ')}) —
+              แต่<b>ห้ามสร้างไฟล์เปล่า</b>: ถ้ามีใบอื่นทำหน้าที่นั้นอยู่แล้ว (§ 7.3)
+              หรือยังไม่ถึงเวลา ให้เขียนไว้ว่าทำไม แล้วเปิดเป็นแถวแทน
+            </>
+          ) : (
+            <>
+              session นี้เปิด<b>แถวใน <code>slices.md</code></b> ของ {project.name} —
+              หรือเขียนไว้ว่าทำไมโปรเจกต์นี้ไม่มีงานของ role นี้จริง ๆ
+            </>
+          )}
+        </p>
+      }
+      compose={(role) => composeRoleGapPrompt(project, row, role)}
+      onClose={onClose}
+    />
+  );
+}
+
 /** A title or note past this many characters gets clamped by CSS, so the
  *  [อ่านเต็ม] button only needs to know the character count — never the
  *  rendered DOM height (slices.md S21 §(ง)). */
@@ -450,22 +539,24 @@ const READ_MORE_THRESHOLD = 100;
 
 function ProjectBoard({
   project,
-  dispatch,
+  data,
   onDispatch,
   onGrill,
   onGaps,
 }: {
   project: WorkspaceProject;
-  dispatch: WorkspaceDispatch;
+  data: WorkspaceResponse;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
   onGaps: () => void;
 }) {
+  const dispatch = data.dispatch;
   const [reading, setReading] = useState<WorkspaceSlice | null>(null);
   // Same function the gap dialog uses, so the badge and the panel can never
-  // report two different numbers (ADR-0040 §SD2).
-  const gaps = projectGaps(project, { dispatch });
-  const missing = gaps.missingSlots;
+  // report two different numbers (ADR-0040 §SD2, now counted by role —
+  // ADR-0042 §SD1: a file that used to be counted twice is counted once).
+  const gaps = projectRoleGaps(project, data);
+  const missing = projectGaps(project, data).missingSlots;
   return (
     <section className="project">
       <div className="project-head">
