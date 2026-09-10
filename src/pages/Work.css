@@ -1466,3 +1466,231 @@
     justify-content: flex-start;
   }
 }
+
+/* ── the two screens of /work (ADR-0043 §SD1) ─────────────────────────────
+   A segmented picker, not a third action button. It sits at the head of the
+   subbar because it decides what the page *is*; the buttons that act on the
+   page keep their place at the far end. */
+.work-views {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.work-view {
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.work-view + .work-view {
+  border-left: 1px solid var(--line);
+}
+.work-view:hover {
+  color: var(--fg-dim);
+}
+.work-view.on {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* ── the register itself ───────────────────────────────────────────────── */
+.rr {
+  padding: 14px;
+}
+.rr-lede h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.rr-lede p {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.rr-lede code,
+.rr-notes code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.rr-blocked {
+  border: 1px solid var(--blocked);
+  background: var(--blocked-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.rr-blocked p {
+  margin: 0 0 5px;
+}
+.rr-blocked .why {
+  color: var(--muted);
+}
+
+.rr-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.rr-row {
+  display: grid;
+  grid-template-columns: 150px 88px 1fr 1.2fr 1.9fr 118px;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 11px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.rr-row:first-child {
+  border-top: 0;
+}
+.rr-head {
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.rr-cell {
+  display: block;
+  min-width: 0;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.rr-cell em {
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--faint);
+  line-height: 1.45;
+}
+.rr-cell em.warn,
+.rr-notes li.warn,
+.rr-cell b.warn {
+  color: var(--awaiting);
+}
+.rr-cell code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-right: 5px;
+}
+.rr-role b {
+  display: block;
+  color: var(--fg);
+  font-size: 12.5px;
+}
+.rr-raw {
+  color: var(--fg-dim);
+}
+.rr-dark {
+  color: var(--faint);
+}
+.rr-half {
+  color: var(--awaiting);
+}
+.rr-cmd {
+  display: block;
+  margin: 3px 0 2px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ok) !important;
+  font-size: 10.5px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.rr-target {
+  display: block;
+  margin-bottom: 6px;
+}
+.rr-target:last-child {
+  margin-bottom: 0;
+}
+.rr-levels {
+  display: block;
+}
+.rr-level {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.rr-level b {
+  color: var(--fg);
+}
+.rr-level i {
+  font-style: normal;
+  color: var(--faint);
+}
+.rr-paths {
+  display: block;
+  margin: 1px 0 3px;
+}
+.rr-paths code {
+  display: inline-block;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+.rr-paths i {
+  font-style: normal;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+.rr-tier b {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: 11px;
+}
+.rr-tier b.t-heavy {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rr-notes {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+.rr-notes h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+.rr-notes ul {
+  margin: 0;
+  padding-left: 17px;
+}
+.rr-notes li {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.65;
+  margin-bottom: 4px;
+}
+
+/* The board is read on a tablet — the table becomes stacked rows, each cell
+   wearing its own header, the same way the belt panel does (ADR-0036 §SD5(ค)). */
+@media (max-width: 1000px) {
+  .rr-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .rr-head {
+    display: none;
+  }
+  .rr-cell::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    color: var(--faint);
+  }
+}
