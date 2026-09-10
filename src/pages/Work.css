@@ -974,9 +974,15 @@
   color: var(--fg);
 }
 
-/* ── role participation panel (ADR-0039) ── */
+/* ── belt panel (ADR-0039 · widened to four columns by ADR-0041) ── */
 .dlg.ra {
-  width: min(760px, 100%);
+  width: min(1180px, 100%);
+}
+.ra-lede {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
 }
 .ra-windows {
   display: flex;
@@ -1031,6 +1037,134 @@
   align-items: baseline;
   padding: 7px 10px;
   border-top: 1px solid var(--line);
+}
+/* The four-column belt table (ADR-0041). Column ③ is the widest because it is
+   the one carrying prose the SOP wrote — §7.3's "another file may answer this"
+   is printed, never a tooltip (ADR-0036 §SD5(ค): the board is read on a
+   tablet). */
+.ra-belt .ra-row {
+  grid-template-columns: 150px 1fr 1fr 1.7fr 1fr;
+  align-items: start;
+}
+.ra-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  word-break: break-word;
+}
+.ra-cell code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+}
+.ra-cell em {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+.ra-cell b.warn,
+.ra-cell em.warn {
+  color: var(--accent-ink);
+}
+.ra-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+.ra-yes {
+  color: var(--ok, #4a8f5b);
+  font-weight: 700;
+}
+.ra-half {
+  color: var(--warn, #d08b2c);
+  font-weight: 700;
+}
+.ra-no {
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.ra-dark {
+  color: var(--faint);
+}
+.ra-open {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+.ra-belt-note {
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+.ra-belt-note h4 {
+  margin: 0 0 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+.ra-stages {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+}
+.ra-stages code {
+  font-family: var(--mono);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.ra-stages code.unowned {
+  border-style: dashed;
+  color: var(--muted);
+}
+.ra-stages i {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--faint);
+}
+.ra-belt-note ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ra-belt-note li {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ra-belt-note code {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.ra-belt-note .warn,
+.ra-belt-note b.warn {
+  color: var(--accent-ink);
+}
+/* On a narrow screen the four columns stack rather than shrink into a strip
+   nobody can read — same reason the board's own columns wrap. */
+@media (max-width: 900px) {
+  .ra-belt .ra-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .ra-belt .ra-head {
+    display: none;
+  }
+  .ra-belt .ra-cell::before {
+    content: attr(data-label);
+    font-size: 10px;
+    color: var(--faint);
+  }
 }
 .ra-row:first-child {
   border-top: 0;
