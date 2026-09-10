@@ -44,6 +44,13 @@ export interface ProjectSelection<P> {
    *  prints it: a pinned tab that silently widened to every project is the
    *  same class of quiet failure as a calendar bar that loses its button. */
   unknown: string | null;
+  /** The resolved name, or `null` for the all view — including the case where
+   *  the URL named a project this board cannot show. Added for the register
+   *  screen (ADR-0043 Amendment, S34), which filters *a column* rather than
+   *  choosing what to render, so `shown` has nothing to tell it. Derived here
+   *  rather than re-tested by each caller: two readers of one selection are
+   *  two things that can disagree about what "unknown" widens to. */
+  picked: string | null;
 }
 
 /** Picks the projects to render for a requested name. */
@@ -51,8 +58,12 @@ export function resolveProjectSelection<P extends { name: string }>(
   projects: P[],
   requested: string | null,
 ): ProjectSelection<P> {
-  if (requested === null) return { value: ALL, shown: projects, unknown: null };
+  if (requested === null) {
+    return { value: ALL, shown: projects, unknown: null, picked: null };
+  }
   const hit = projects.find((p) => p.name === requested);
-  if (!hit) return { value: ALL, shown: projects, unknown: requested };
-  return { value: hit.name, shown: [hit], unknown: null };
+  if (!hit) {
+    return { value: ALL, shown: projects, unknown: requested, picked: null };
+  }
+  return { value: hit.name, shown: [hit], unknown: null, picked: hit.name };
 }

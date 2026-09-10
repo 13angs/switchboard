@@ -65,4 +65,21 @@ const emptyBoard = resolveProjectSelection([] as { name: string }[], 'switchboar
 assert(emptyBoard.shown.length === 0, 'no projects in, no projects out');
 assert(emptyBoard.unknown === 'switchboard', 'still names what the URL asked for');
 
+// ── the resolved pick, for the register screen (S34) ──
+// It filters a *column*, so `shown` tells it nothing — and an unrecognised
+// name must widen to "all", never leak through as a project nobody can see.
+assert(resolveProjectSelection(projects, null).picked === null, 'all view picks nothing');
+assert(
+  resolveProjectSelection(projects, 'switchboard').picked === 'switchboard',
+  'a known project is the pick',
+);
+assert(
+  resolveProjectSelection(projects, 'partner-offer').picked === null,
+  'an unknown name widens the pick too, not just the board',
+);
+assert(
+  resolveProjectSelection([] as { name: string }[], 'switchboard').picked === null,
+  'an empty board picks nothing',
+);
+
 console.log('project-filter check: OK');

@@ -814,7 +814,7 @@ def _resolve_record_target(root: Path, token: str) -> dict:
     pattern = _PLACEHOLDER.sub("*", token).strip().rstrip("/")
     at_root = _rel_matches(root, root, pattern)
     hits: list[str] = []
-    holders = 0
+    holders: list[dict] = []
     projects_dir = root / "projects"
     if projects_dir.is_dir():
         for child in sorted(projects_dir.iterdir()):
@@ -822,10 +822,17 @@ def _resolve_record_target(root: Path, token: str) -> dict:
                 continue
             found = _rel_matches(root, child, pattern)
             if found:
-                holders += 1
+                holders.append({"project": child.name, **_sample(found)})
                 hits.extend(found)
     project = _sample(sorted(hits))
-    project["projects"] = holders
+    project["projects"] = len(holders)
+    # ADR-0043 Amendment (S34) — the per-project split, so the picker can
+    # answer "this project's ⑤" exactly. Kept beside the aggregate rather than
+    # replacing it: the register itself is workspace-level (seven roles, one
+    # table), and a filtered view must never look like the whole answer. The
+    # browser cannot derive this from the aggregate — `paths` is capped, so
+    # filtering a sample would undercount and quietly say zero.
+    project["by_project"] = holders
     return {
         "token": token,
         # Printed beside the token: a `<n>` that became `*` is a substitution

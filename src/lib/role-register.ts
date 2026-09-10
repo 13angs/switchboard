@@ -2,6 +2,8 @@ import type {
   WorkspaceDispatch,
   WorkspaceRegister,
   RegisterRole,
+  RegisterLevel,
+  RegisterTarget,
 } from './api';
 import { roleSlug } from './project-gaps';
 
@@ -118,4 +120,48 @@ export function pointsAtNothing(row: RegisterRow): boolean {
   return records.targets.every(
     (t) => t.levels.workspace.have === 0 && t.levels.project.have === 0,
   );
+}
+
+
+/**
+ * Column ⑤'s project half, narrowed to one project (ADR-0043 Amendment, S34).
+ *
+ * `null` project ⇒ the aggregate, exactly as before. A named project ⇒ that
+ * project's own row out of `by_project`, and **a real zero when it has none** —
+ * never the aggregate standing in, which would let a filtered screen show
+ * another project's files under this project's name.
+ *
+ * An older payload with no `by_project` degrades to `unknown` rather than to
+ * the aggregate, for the same reason: the honest answer to "does this project
+ * carry it" is *the board cannot tell*, and ADR-0043 §SD7 already prints that
+ * shape rather than guessing.
+ */
+export function projectLevel(
+  target: RegisterTarget,
+  project: string | null,
+): { level: RegisterLevel | null; scoped: boolean } {
+  const level = target.levels.project;
+  if (!project) return { level, scoped: false };
+  if (!level.by_project) return { level: null, scoped: true };
+  const row = level.by_project.find((p) => p.project === project);
+  return {
+    level: row ?? { have: 0, paths: [], more: 0, projects: 0 },
+    scoped: true,
+  };
+}
+
+/** Whether a row still points at anything once the picker narrows it. Used to
+ *  print *this project has none* without claiming the register asked for none. */
+export function pointsAtNothingIn(row: RegisterRow, project: string | null): boolean {
+  const records = row.ownership?.records;
+  if (!records || records.kind !== 'files' || records.targets.length === 0) {
+    return false;
+  }
+  return records.targets.every((t) => {
+    const { level } = projectLevel(t, project);
+    const inProject = level ? level.have : 0;
+    // With a project picked, a workspace-level match is not this project's
+    // answer — it is the ◐ case ADR-0042 §SD3 settled, printed as its own line.
+    return project ? inProject === 0 : t.levels.workspace.have === 0 && inProject === 0;
+  });
 }

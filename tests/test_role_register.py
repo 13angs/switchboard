@@ -160,6 +160,39 @@ def test_a_project_relative_token_still_resolves_below_projects(tmp_path):
     assert design["levels"]["project"]["projects"] == 2
 
 
+def test_the_project_level_splits_per_project(tmp_path):
+    """ADR-0043 Amendment (S34) — the picker needs an exact per-project count.
+
+    Not derivable in the browser: `paths` is a capped sample, so filtering it
+    would report zero for a project whose matches fell off the end.
+    """
+    targets = _row(workspace.role_register(_workspace(tmp_path)), "tech-lead")[
+        "records"
+    ]["targets"]
+    design = next(t for t in targets if t["token"] == "docs/design/*")
+    by_project = design["levels"]["project"]["by_project"]
+
+    assert [p["project"] for p in by_project] == ["alpha", "beta"]
+    assert all(p["have"] == 1 for p in by_project)
+    assert by_project[0]["paths"] == ["projects/alpha/docs/design/hld.md"]
+    # The aggregate stays beside it — the register is workspace-level, and a
+    # filtered column must never look like the whole answer.
+    assert design["levels"]["project"]["have"] == 2
+    assert design["levels"]["project"]["projects"] == 2
+
+
+def test_a_project_with_no_match_is_absent_from_the_split_not_zero_filled(tmp_path):
+    """`gamma` carries nothing, so it has no row — the browser reads absence as
+    a real zero rather than the payload carrying 33 empty entries."""
+    ws = _workspace(tmp_path)
+    (ws / "projects" / "gamma").mkdir()
+
+    targets = _row(workspace.role_register(ws), "tech-lead")["records"]["targets"]
+    design = next(t for t in targets if t["token"] == "docs/design/*")
+
+    assert "gamma" not in [p["project"] for p in design["levels"]["project"]["by_project"]]
+
+
 def test_a_pattern_that_matches_nothing_is_zero_not_missing(tmp_path):
     ws = _workspace(tmp_path)
     (ws / "meta" / "adr-one.md").unlink()

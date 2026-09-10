@@ -9,6 +9,8 @@ import {
   roleRegister,
   assignmentQuery,
   pointsAtNothing,
+  pointsAtNothingIn,
+  projectLevel,
   type RegisterRow,
 } from './role-register';
 import type {
@@ -191,5 +193,73 @@ const empty = roleRegister({
   dispatch,
 });
 assert(pointsAtNothing(empty.rows[0]), 'a pattern that matches nothing is reported as empty');
+
+// ── the picker narrows column ⑤ only (ADR-0043 Amendment, S34) ──
+const design = {
+  token: 'docs/design/*',
+  glob: 'docs/design/*',
+  levels: {
+    workspace: { have: 0, paths: [], more: 0 },
+    project: {
+      have: 5,
+      paths: ['projects/alpha/docs/design/a.md'],
+      more: 4,
+      projects: 2,
+      by_project: [
+        { project: 'alpha', have: 3, paths: ['projects/alpha/docs/design/a.md'], more: 2 },
+        { project: 'beta', have: 2, paths: ['projects/beta/docs/design/b.md'], more: 1 },
+      ],
+    },
+  },
+};
+
+const all = projectLevel(design, null);
+assert(!all.scoped && all.level?.have === 5, 'no project picked ⇒ the aggregate, unchanged');
+
+const alpha = projectLevel(design, 'alpha');
+assert(alpha.scoped && alpha.level?.have === 3, 'a picked project gets its own count');
+assert(
+  alpha.level?.paths[0] === 'projects/alpha/docs/design/a.md',
+  'and its own paths, not the aggregate sample',
+);
+
+// The case a client-side filter over the capped `paths` would get wrong: a
+// project with matches that fell outside the sample must not read as zero, and
+// a project with none must not inherit the aggregate.
+const gamma = projectLevel(design, 'gamma');
+assert(gamma.scoped && gamma.level?.have === 0, 'a project with none is a real zero');
+assert(gamma.level?.paths.length === 0, 'and shows no other project\'s files');
+
+// An older payload cannot answer per project — that is "cannot tell", not zero.
+const legacy = projectLevel(
+  {
+    ...design,
+    levels: { ...design.levels, project: { have: 5, paths: [], more: 5, projects: 2 } },
+  },
+  'alpha',
+);
+assert(legacy.level === null, 'no by_project ⇒ the board says it cannot tell');
+
+// ── emptiness is reported per scope ──
+const withDesign = roleRegister({
+  register: {
+    ...register,
+    roles: [
+      role('tech-lead', 'build', ['software-design'], {
+        raw: '`docs/design/*`',
+        kind: 'files',
+        targets: [design],
+      }),
+    ],
+  },
+  dispatch,
+}).rows[0];
+assert(!pointsAtNothingIn(withDesign, null), 'the aggregate has matches');
+assert(!pointsAtNothingIn(withDesign, 'alpha'), 'alpha has matches');
+assert(pointsAtNothingIn(withDesign, 'gamma'), 'gamma is empty for this row');
+// A workspace-level target is never *this project's* answer — with a project
+// picked it counts as empty here and prints as its own line instead.
+assert(pointsAtNothingIn(cto, 'alpha'), 'a workspace-level target is not a project answer');
+assert(!pointsAtNothing(cto), 'and is still not empty at workspace scope');
 
 console.log('role-register check: OK');
