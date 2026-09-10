@@ -768,6 +768,9 @@ def role_register(root: Path, ownership: Optional[dict] = None) -> dict:
     }
 
 
+_SURFACE_PREFIX = "surface:"
+
+
 def _resolve_records(root: Path, raw: str) -> dict:
     """The `บันทึกผลลงที่` cell, and whether the tree carries what it names.
 
@@ -777,27 +780,74 @@ def _resolve_records(root: Path, raw: str) -> dict:
     a PR thread — which is a different answer from *the file is not written
     yet*, and rendering both as an empty cell sends a reader off to create
     files roles.md never asked for. `kind` carries that apart.
+
+    ADR-0043 Amendment (2) — `kind` moved from the cell to each *target*
+    (§A5): a cell can name both a file and a non-file surface at once
+    (`tech-lead`'s ADR/HLD + a signed-off artifact URL), and the old
+    all-or-nothing `kind` could only ever print half of such a row. The cell
+    keeps a summary value — `'files'` · `'not-files'` · the new `'mixed'` — so
+    a reader written against the two original values still gets a true answer
+    for every row that only ever named one kind.
     """
     targets: list[dict] = []
     rejected: list[str] = []
+    consumed: list[str] = []
     for token in _CODE_TOKEN.findall(raw):
+        # Checked before `_looks_like_path()` (§A6) so a slug that happens to
+        # contain `/` in the future is never mistaken for a glob.
+        if token.startswith(_SURFACE_PREFIX):
+            targets.append(_resolve_surface_target(token))
+            consumed.append(token)
+            continue
         if not _looks_like_path(token):
-            continue  # `platform-core` in devops' cell is a project, not a place
+            continue  # `platform-core` in devops' cell is a project, not a place — stays in note (§A7)
         if not _safe_glob(token):
             rejected.append(token)
+            consumed.append(token)
             continue
         targets.append(_resolve_record_target(root, token))
+        consumed.append(token)
+
+    kinds = {t["kind"] for t in targets}
+    if not targets:
+        kind = "not-files"
+    elif kinds == {"file"}:
+        kind = "files"
+    else:
+        kind = "mixed"
+
+    # §A7 — only the backtick spans that became a target or were rejected are
+    # cut from the note; a token that fell through both checks above (neither
+    # path-shaped nor a surface) is prose, and must survive here or it
+    # vanishes from the screen with nothing saying so.
+    note_source = raw
+    for token in consumed:
+        note_source = note_source.replace(f"`{token}`", "", 1)
+
     return {
         "raw": raw,
         "text": _strip_md(raw),
-        "kind": "files" if targets else "not-files",
+        "kind": kind,
         "targets": targets,
         "rejected": rejected,
         # Same shape `_signatures` carries its leftover prose in: the wording
         # reaches the screen from roles.md rather than from a sentence retyped
         # here (`ADR เมื่อการตัดสินผูกทั้งระบบ` is the whole of what makes
         # senior-developer's line different from developer's).
-        "note": _strip_md(_CODE_TOKEN.sub("", raw)).strip(" ·—-"),
+        "note": _strip_md(note_source).strip(" ·—-"),
+    }
+
+
+def _resolve_surface_target(token: str) -> dict:
+    """A `surface:<slug>` token (ADR-0043 Amendment (2) §A6) — a place this
+    role records into that is not a file in the tree (a PR body, an external
+    Sheet/Doc). Not glob'd, not counted (§A8): the board reads only files
+    committed at HEAD, and this one's real location is not one. No slug list
+    is hard-coded here — the meaning comes from the prose in the cell."""
+    return {
+        "token": token,
+        "kind": "surface",
+        "slug": token[len(_SURFACE_PREFIX):],
     }
 
 
@@ -835,6 +885,7 @@ def _resolve_record_target(root: Path, token: str) -> dict:
     project["by_project"] = holders
     return {
         "token": token,
+        "kind": "file",
         # Printed beside the token: a `<n>` that became `*` is a substitution
         # the reader gets to see, not one they have to know about.
         "glob": pattern,

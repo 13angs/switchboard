@@ -17,6 +17,7 @@ import type {
   WorkspaceDispatch,
   WorkspaceRegister,
   RegisterRole,
+  RegisterFileTarget,
 } from './api';
 
 function assert(cond: unknown, msg: string): asserts cond {
@@ -58,6 +59,7 @@ const register: WorkspaceRegister = {
       kind: 'files',
       targets: [
         {
+          kind: 'file',
           token: 'meta/adr-*.md',
           glob: 'meta/adr-*.md',
           levels: {
@@ -179,6 +181,7 @@ const empty = roleRegister({
         kind: 'files',
         targets: [
           {
+            kind: 'file',
             token: 'rollout.md',
             glob: 'rollout.md',
             levels: {
@@ -194,8 +197,86 @@ const empty = roleRegister({
 });
 assert(pointsAtNothing(empty.rows[0]), 'a pattern that matches nothing is reported as empty');
 
+// ── a mixed cell (Amendment (2) §A5) — a surface never counts as a file ──
+const mixed = roleRegister({
+  register: {
+    ...register,
+    roles: [
+      role('tech-lead', 'build', ['software-design', 'ux-ui'], {
+        raw: '`docs/design/*` + `surface:pr-body`',
+        kind: 'mixed',
+        targets: [
+          {
+            kind: 'file',
+            token: 'docs/design/*',
+            glob: 'docs/design/*',
+            levels: {
+              workspace: { have: 0, paths: [], more: 0 },
+              project: { have: 0, paths: [], more: 0, projects: 0 },
+            },
+          },
+          { kind: 'surface', token: 'surface:pr-body', slug: 'pr-body' },
+        ],
+      }),
+    ],
+  },
+  dispatch,
+}).rows[0];
+assert(
+  pointsAtNothing(mixed),
+  'the surface target is not counted — the file target with zero matches still warns',
+);
+
+const mixedWithFile = roleRegister({
+  register: {
+    ...register,
+    roles: [
+      role('tech-lead', 'build', ['software-design'], {
+        raw: '`docs/design/*` + `surface:pr-body`',
+        kind: 'mixed',
+        targets: [
+          {
+            kind: 'file',
+            token: 'docs/design/*',
+            glob: 'docs/design/*',
+            levels: {
+              workspace: { have: 2, paths: ['docs/design/a.md'], more: 1 },
+              project: { have: 0, paths: [], more: 0, projects: 0 },
+            },
+          },
+          { kind: 'surface', token: 'surface:pr-body', slug: 'pr-body' },
+        ],
+      }),
+    ],
+  },
+  dispatch,
+}).rows[0];
+assert(
+  !pointsAtNothing(mixedWithFile),
+  'a mixed cell with a matching file target is not reported as empty',
+);
+
+// A row whose only targets are surfaces has nothing for `pointsAtNothing` to
+// filter down to — never reported as empty (there is no file pattern to warn
+// about; §A8 says the board does not count surfaces at all).
+const surfaceOnly = roleRegister({
+  register: {
+    ...register,
+    roles: [
+      role('tech-lead', 'build', ['ux-ui'], {
+        raw: '`surface:pr-body`',
+        kind: 'mixed',
+        targets: [{ kind: 'surface', token: 'surface:pr-body', slug: 'pr-body' }],
+      }),
+    ],
+  },
+  dispatch,
+}).rows[0];
+assert(!pointsAtNothing(surfaceOnly), 'a surface-only row has no file target to warn about');
+
 // ── the picker narrows column ⑤ only (ADR-0043 Amendment, S34) ──
-const design = {
+const design: RegisterFileTarget = {
+  kind: 'file',
   token: 'docs/design/*',
   glob: 'docs/design/*',
   levels: {

@@ -1,4 +1,4 @@
-import type { WorkspaceResponse, RegisterLevel } from '../lib/api';
+import type { WorkspaceResponse, RegisterLevel, RegisterFileTarget, RegisterSurfaceTarget } from '../lib/api';
 import {
   roleRegister,
   assignmentQuery,
@@ -224,6 +224,11 @@ function Row({
  * and printing those as blank sends a reader off to create files roles.md
  * never asked for. So they print what they are, with the query that finds the
  * record where it actually lives.
+ *
+ * A cell can also be `mixed` (Amendment (2) §A5) — `tech-lead` and
+ * `product-owner` record some results into files and one into a PR body — so
+ * this prints file targets and surface targets side by side rather than
+ * picking one kind for the whole cell.
  */
 function Files({ row, project }: { row: RegisterRow; project: string | null }) {
   const records = row.ownership?.records ?? null;
@@ -241,9 +246,16 @@ function Files({ row, project }: { row: RegisterRow; project: string | null }) {
     );
   }
 
+  const fileTargets = records.targets.filter(
+    (t): t is RegisterFileTarget => t.kind === 'file',
+  );
+  const surfaceTargets = records.targets.filter(
+    (t): t is RegisterSurfaceTarget => t.kind === 'surface',
+  );
+
   return (
     <>
-      {records.targets.map((t) => (
+      {fileTargets.map((t) => (
         <span className="rr-target" key={t.token}>
           <code>{t.token}</code>
           {t.glob !== t.token && (
@@ -271,6 +283,16 @@ function Files({ row, project }: { row: RegisterRow; project: string | null }) {
               muted={Boolean(project)}
             />
           </span>
+        </span>
+      ))}
+      {surfaceTargets.map((t) => (
+        <span className="rr-target rr-surface" key={t.token}>
+          <span className="rr-half">◐</span> <code>{t.slug}</code>
+          <em>
+            บอร์ด<b>ไม่ได้นับให้</b> — ที่อยู่จริงเป็น PR body ไม่ใช่ไฟล์ในทรี ·
+            เปิด PR ของคอมมิตที่เจอ
+          </em>
+          <code className="rr-cmd">{assignmentQuery(row.slug)}</code>
         </span>
       ))}
       {pointsAtNothingIn(row, project) && (
