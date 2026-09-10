@@ -1344,3 +1344,125 @@
 .gaps-fill:hover {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
 }
+
+/* ── gap panel collapsed onto the role (ADR-0042) ── */
+.dlg.gaps {
+  width: min(760px, 100%);
+}
+.gaps-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.gaps-row {
+  display: grid;
+  grid-template-columns: 130px 130px minmax(0, 1fr) 92px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.gaps-row:first-child {
+  border-top: 0;
+}
+.gaps-head {
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+}
+.gaps-row.gap {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.g-role {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.g-role b {
+  font-weight: 650;
+}
+.g-role em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+.g-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.g-cell em,
+.g-half em {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+.g-cell em.warn {
+  color: var(--accent-ink);
+}
+.g-cell code,
+.g-surface code {
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--fg-dim);
+}
+.g-surface {
+  display: block;
+}
+.g-half {
+  color: var(--muted);
+}
+.g-act {
+  display: flex;
+  justify-content: flex-end;
+}
+.g-go {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.g-go:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.g-nogo {
+  font-style: normal;
+  font-size: 10px;
+  text-align: right;
+  color: var(--faint);
+}
+.gaps-orphan {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+/* Same reason as the belt panel: on a tablet held narrow the four columns
+   stack instead of shrinking into a strip nobody can read. */
+@media (max-width: 900px) {
+  .gaps-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .gaps-head {
+    display: none;
+  }
+  .gaps-row .g-cell::before {
+    content: attr(data-label);
+    font-size: 10px;
+    color: var(--faint);
+  }
+  .g-act {
+    justify-content: flex-start;
+  }
+}

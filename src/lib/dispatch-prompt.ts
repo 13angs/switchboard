@@ -461,3 +461,148 @@ export function composeFillGapsPrompt(
 
   return lines.join("\n");
 }
+
+/**
+ * The prompt one row of the collapsed gap panel opens with (ADR-0042 §SD5).
+ *
+ * The fifth shape, and the first one whose PR may touch a file that is not
+ * `slices.md`. Every other board prompt hands work *about* the register;
+ * this one hands a role the line it signs at close-out
+ * (`sop-pipeline-handoff.md § 7.2`) and asks it to make that line signable.
+ *
+ * Mechanically it is `composePrompt`'s sibling, not `composeGrillPrompt`'s: the
+ * role is one of the 7 and resolves through `dispatch.roles`, so the tier is
+ * pinned from the table (ADR-0030) and there is no `Team-Slug-Approved:`
+ * trailer — that trailer exists for `forge`, which is a `team/` slug and not a
+ * role (ADR-0037 §SD1).
+ *
+ * The ⛔ block is where the honesty lives. A board that measures `rollout.md`
+ * missing in 6 of 6 projects is one loop away from six empty files that move a
+ * number and close nothing, which is the failure ADR-0040 §SD1 named for rows
+ * and this one inherits for files. Three sentences push back — check §7.3 for a
+ * file already doing the job, refuse to create a file with no real content, and
+ * stay inside this project — but the guard that actually holds is structural:
+ * one press, one role, one project, and no "do them all" button anywhere.
+ */
+export function composeRoleGapPrompt(
+  project: WorkspaceProject,
+  gap: {
+    role: string;
+    slug: string;
+    rows: number;
+    closes: string;
+    note: string;
+    surfaces: { token: string; level: string; present: boolean | null }[];
+    missing: string[];
+  },
+  role: DispatchRole,
+): string {
+  const lines: string[] = [];
+  const files = gap.surfaces.filter((s) => s.level === 'project' && s.present === false);
+  const noRows = gap.rows === 0;
+
+  lines.push(
+    `คุณรับบทบาท **${role.role}** ของ team-os (รันบน tier \`${role.tier}\`)`,
+  );
+  lines.push("");
+
+  lines.push(
+    `งาน: **ปิดช่องที่ขาดของ \`${gap.slug}\` ใน \`${project.name}\`** — บรรทัดของ role นี้ที่ด่านปิดรอบ`,
+  );
+  if (gap.closes) {
+    lines.push(
+      `บรรทัดของคุณใน \`sop-pipeline-handoff.md § 7.2\`: *"${gap.closes}"*${
+        gap.note ? ` · โน้ตของแถว: *"${gap.note}"*` : ""
+      }`,
+    );
+  }
+  lines.push("");
+
+  lines.push("ช่องที่บอร์ดวัดได้ ณ ตอนกด (ของโปรเจกต์นี้เท่านั้น):");
+  lines.push(
+    noRows
+      ? `- **แถวใน \`slices.md\` ที่เขียนชื่อ role นี้: 0 แถว** — ไม่เคยมีงานของ role นี้ในโปรเจกต์นี้เลย`
+      : `- แถวใน \`slices.md\` ที่เขียนชื่อ role นี้: ${gap.rows} แถว`,
+  );
+  if (files.length > 0) {
+    lines.push(
+      `- **พื้นผิวตอนปิดที่ยังไม่มีไฟล์**: ${files
+        .map((s) => `\`${s.token}\``)
+        .join(" · ")}`,
+    );
+  } else if (gap.surfaces.length === 0) {
+    lines.push(
+      "- พื้นผิวตอนปิดของ role นี้ **ไม่ใช่ไฟล์ในโปรเจกต์** ⇒ บอร์ดวัดให้ไม่ได้ และเซสชันนี้ปิดมันไม่ได้ด้วย",
+    );
+  } else {
+    lines.push("- พื้นผิวตอนปิดที่เป็นไฟล์ของโปรเจกต์นี้: มีครบแล้ว");
+  }
+  lines.push("");
+
+  // The deliverable is the half that differs from every other shape: a row is
+  // a line in a file that already exists, a signing surface may not exist yet.
+  lines.push("เสร็จเมื่อ — PR เดียวที่แก้เฉพาะใต้ `projects/" + project.name + "/`:");
+  if (files.length > 0) {
+    lines.push(
+      `1. **${files
+        .map((s) => `\`${s.token}\``)
+        .join(" · ")} ตอบบรรทัดของ role นี้ได้จริง** — หรือมีคำตอบที่เขียนไว้ว่าทำไมยังไม่ถึงเวลา (ดู ⛔ ข้างล่าง)`,
+    );
+  }
+  if (noRows) {
+    lines.push(
+      `${files.length > 0 ? "2" : "1"}. **แถวใน \`projects/${project.name}/slices.md\` ที่เขียนชื่อ role นี้** — หรือเหตุผลที่เขียนไว้ว่าโปรเจกต์นี้ไม่มีงานของ role นี้จริง ๆ`,
+    );
+  }
+  lines.push("");
+
+  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
+  lines.push(
+    `- projects/${project.name}/slices.md — แถวที่มีอยู่แล้ว + กฎการเขียนแถวของไฟล์นี้`,
+  );
+  if (project.has.scope)
+    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
+  if (project.has.risks)
+    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
+  lines.push(
+    "- docs/sops/sop-pipeline-handoff.md § 7.2 · § 7.3 — บรรทัดของ role นี้ และกติกาที่ให้ใบชื่ออื่นตอบแทนได้",
+  );
+  lines.push(
+    "- team-os/people/roles.md § แกนความเป็นเจ้าของ — role นี้ถือ discipline อะไร และบันทึกที่ไหน",
+  );
+  for (const s of SPINE) lines.push(`- ${s}`);
+  lines.push("");
+
+  lines.push("กฎกลางของ team-os:");
+  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
+  lines.push("");
+
+  lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
+  lines.push(
+    "- **ถาม `§ 7.3` ก่อนสร้างไฟล์เสมอ** — ด่านถาม *หน้าที่* ไม่ได้ถาม *ชื่อไฟล์* · มีใบที่ทำหน้าที่นั้นอยู่แล้วใต้ชื่ออื่น (เคสจริง: `ai-chatbot` มีพื้นผิว `rollout` อยู่ที่ `docs/design/reply-bot-reopen-contract.md`) ⇒ ผลลัพธ์ที่ถูกคือ **เขียนว่าใบไหนทำหน้าที่อะไร** ไม่ใช่สร้างไฟล์ใหม่",
+  );
+  lines.push(
+    "- **ห้ามสร้างไฟล์ที่ยังไม่มีเนื้อจริง** — โปรเจกต์ที่ยังไม่เคยปล่อยของ คำตอบที่ซื่อสัตย์คือ *แถวใน `slices.md` ว่ายังไม่ถึงเวลา* ไม่ใช่ไฟล์เปล่าที่ทำให้ตัวเลขบนบอร์ดขยับ (`team-os/ways-of-working/definition-of-done.md § ระดับโปรเจกต์`: *การเดาใส่แย่กว่าการปล่อยว่าง*)",
+  );
+  lines.push(
+    `- **แก้ได้เฉพาะใต้ \`projects/${project.name}/\`** — ห้ามแตะโปรเจกต์อื่นหรือโค้ด · ช่องเดียวกันนี้ขาดในหลายโปรเจกต์ และการไล่เติมให้ครบเป็นงานคนละใบที่เจ้าของกดเอง`,
+  );
+  lines.push(
+    "- **ไม่มีทางลัด** — worktree → PR → เจ้าของอ่านก่อน merge เหมือนงานเขียนไฟล์อื่นทุกเส้นทาง",
+  );
+  lines.push("");
+
+  const client = project.client || "internal";
+  const slug = (files.length > 0 ? files[0].token : `slices-${gap.slug}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  lines.push(
+    `Assignment: ${client}/-/${gap.slug}/${`${slug}-${project.name}`.slice(0, 40)}`,
+  );
+  lines.push(
+    "(ช่อง office เป็น `-` เพราะบอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต · ช่อง role คือ role ที่ปุ่มนี้เปิดให้ ห้ามเปลี่ยน)",
+  );
+
+  return lines.join("\n");
+}
