@@ -217,7 +217,23 @@ export function WorkPage() {
         </section>
       )}
 
-      {data && view === 'register' && <RoleRegister data={data} />}
+      {/* One picker, above the split, because it is the same question on both
+          screens (ADR-0043 Amendment, S34). It rides `?project=` — which the
+          view deliberately does not (§SD1): a pinned tab should keep the
+          *project* and still open on the board. */}
+      {data && data.projects.length > 0 && (
+        <ProjectPicker
+          projects={data.projects}
+          value={selection.value}
+          unknown={selection.unknown}
+          view={view}
+          onPick={pickProject}
+        />
+      )}
+
+      {data && view === 'register' && (
+        <RoleRegister data={data} project={selection.picked} />
+      )}
 
       {view === 'board' && data && data.projects.length === 0 && !loading && (
         <div className="work-empty">
@@ -236,15 +252,6 @@ export function WorkPage() {
           owes time to just because they belong to another piece of work. */}
       {view === 'board' && (
         <DayCalendar dispatch={data?.dispatch ?? null} onDispatched={onDispatched} />
-      )}
-
-      {view === 'board' && data && data.projects.length > 0 && (
-        <ProjectPicker
-          projects={data.projects}
-          value={selection.value}
-          unknown={selection.unknown}
-          onPick={pickProject}
-        />
       )}
 
       {view === 'board' &&
@@ -337,11 +344,15 @@ function ProjectPicker({
   projects,
   value,
   unknown,
+  view,
   onPick,
 }: {
   projects: WorkspaceProject[];
   value: string;
   unknown: string | null;
+  /** Which screen is reading it — the picker is shared, what it filters is not
+   *  (ADR-0043 Amendment, S34), and the line below has to say which. */
+  view: 'board' | 'register';
   onPick: (name: string | null) => void;
 }) {
   return (
@@ -364,8 +375,17 @@ function ProjectPicker({
       {/* Printed, never a `title=` — hover does not exist on the tablet this
           board is read on (ADR-0036 §SD5(ค), the lesson S9 paid for). */}
       <p className="picker-scope">
-        กรอง<b>เฉพาะการ์ดของ <code>slices.md</code></b> — ปฏิทินด้านบนเป็นของข้ามโปรเจกต์
-        และไม่ถูกกรอง
+        {view === 'board' ? (
+          <>
+            กรอง<b>เฉพาะการ์ดของ <code>slices.md</code></b> — ปฏิทินด้านบนเป็นของ
+            ข้ามโปรเจกต์ และไม่ถูกกรอง
+          </>
+        ) : (
+          <>
+            กรอง<b>เฉพาะคอลัมน์ ⑤ ของทะเบียน</b> — 7 role · office · discipline ·
+            ที่บันทึกผล · tier เป็นทะเบียนระดับ workspace และไม่ถูกกรอง
+          </>
+        )}
       </p>
       {unknown && (
         <p className="picker-unknown">

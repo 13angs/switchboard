@@ -318,6 +318,11 @@ export interface RegisterLevel {
   more: number;
   /** `project` level only: how many folders under `projects/` carry it. */
   projects?: number;
+  /** `project` level only: the same matches split per project, so the picker
+   *  can answer one project exactly. Not derivable in the browser — `paths` is
+   *  a capped sample, and filtering a sample undercounts (ADR-0043 Amendment,
+   *  S34). */
+  by_project?: { project: string; have: number; paths: string[]; more: number }[];
 }
 
 /** One location named by a role's `บันทึกผลลงที่` cell, resolved at **both**

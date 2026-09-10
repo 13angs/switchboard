@@ -1,8 +1,9 @@
-import type { WorkspaceResponse } from '../lib/api';
+import type { WorkspaceResponse, RegisterLevel } from '../lib/api';
 import {
   roleRegister,
   assignmentQuery,
-  pointsAtNothing,
+  pointsAtNothingIn,
+  projectLevel,
   type RegisterRow,
 } from '../lib/role-register';
 
@@ -22,7 +23,17 @@ import {
  * Everything is printed as *text*. No `title=`, no hover disclosure: the board
  * is read on a tablet, the lesson `S9` paid for once already (ADR-0036 §SD5(ค)).
  */
-export function RoleRegister({ data }: { data: WorkspaceResponse }) {
+export function RoleRegister({
+  data,
+  project,
+}: {
+  data: WorkspaceResponse;
+  /** The shared picker's selection, `null` for *ทั้งหมด* (ADR-0043 Amendment,
+   *  S34). It narrows column ⑤ only: ①–④ and ⑥ come from a register that is
+   *  workspace-level by construction, and pretending otherwise would print a
+   *  different set of roles per project. */
+  project: string | null;
+}) {
   const view = roleRegister(data);
   const register = data.register;
 
@@ -34,6 +45,23 @@ export function RoleRegister({ data }: { data: WorkspaceResponse }) {
           <b>role นี้คือใคร</b> — office · discipline ที่เปิดอ่าน · ที่บันทึกผล ·
           tier ที่บอร์ดจะปักหมุดให้จริงตอนกด · อ่านสดจาก{' '}
           <code>{register.source}</code> ทุกครั้ง ไม่มีสำเนาในแอป
+        </p>
+        {/* Printed, never a `title=` — the picker changes one column and it
+            must be obvious which, or a filtered screen reads as a different
+            register. */}
+        <p className="rr-scope">
+          {project ? (
+            <>
+              กรอง <b>เฉพาะคอลัมน์ ⑤</b> ให้เหลือของใต้{' '}
+              <code>projects/{project}/</code> — ①–④ และ ⑥ เป็นทะเบียนระดับ
+              workspace <b>ไม่ถูกกรอง</b> (7 role เท่าเดิมทุกโปรเจกต์)
+            </>
+          ) : (
+            <>
+              กำลังดู <b>ทั้งหมด</b> — เลือกโปรเจกต์จาก dropdown ด้านบนเพื่อกรอง
+              คอลัมน์ ⑤ ให้เหลือของใต้โปรเจกต์นั้น
+            </>
+          )}
         </p>
       </div>
 
@@ -72,7 +100,8 @@ export function RoleRegister({ data }: { data: WorkspaceResponse }) {
             <span className="rr-cell">
               ⑤ ไฟล์จริงในเวิร์กสเปซ
               <em>
-                HEAD {data.head ? data.head.slice(0, 7) : 'ไม่ใช่ git'}
+                {project ? `เฉพาะ ${project}` : 'ทุกโปรเจกต์'} · HEAD{' '}
+                {data.head ? data.head.slice(0, 7) : 'ไม่ใช่ git'}
               </em>
             </span>
             <span className="rr-cell">
@@ -81,7 +110,12 @@ export function RoleRegister({ data }: { data: WorkspaceResponse }) {
             </span>
           </div>
           {view.rows.map((row) => (
-            <Row key={row.slug} row={row} dispatchReason={dispatchReason(data)} />
+            <Row
+              key={row.slug}
+              row={row}
+              project={project}
+              dispatchReason={dispatchReason(data)}
+            />
           ))}
         </div>
       )}
@@ -95,7 +129,15 @@ function dispatchReason(data: WorkspaceResponse): string {
   return data.dispatch.present ? '' : data.dispatch.reason;
 }
 
-function Row({ row, dispatchReason }: { row: RegisterRow; dispatchReason: string }) {
+function Row({
+  row,
+  project,
+  dispatchReason,
+}: {
+  row: RegisterRow;
+  project: string | null;
+  dispatchReason: string;
+}) {
   const own = row.ownership;
   const records = own?.records ?? null;
   return (
@@ -152,7 +194,7 @@ function Row({ row, dispatchReason }: { row: RegisterRow; dispatchReason: string
 
       {/* ⑤ */}
       <span className="rr-cell" data-label="⑤ ไฟล์จริง">
-        <Files row={row} />
+        <Files row={row} project={project} />
       </span>
 
       {/* ⑥ */}
@@ -183,7 +225,7 @@ function Row({ row, dispatchReason }: { row: RegisterRow; dispatchReason: string
  * never asked for. So they print what they are, with the query that finds the
  * record where it actually lives.
  */
-function Files({ row }: { row: RegisterRow }) {
+function Files({ row, project }: { row: RegisterRow; project: string | null }) {
   const records = row.ownership?.records ?? null;
   if (records === null) return <span className="rr-dark">อ่านไม่ได้</span>;
 
@@ -210,32 +252,37 @@ function Files({ row }: { row: RegisterRow }) {
             </em>
           )}
           <span className="rr-levels">
-            {(['workspace', 'project'] as const).map((level) => {
-              const at = t.levels[level];
-              return (
-                <span className="rr-level" key={level}>
-                  {level === 'workspace' ? 'ระดับ workspace' : 'ใต้ projects/'}{' '}
-                  <b className={at.have === 0 ? 'warn' : ''}>{at.have}</b> ที่
-                  {level === 'project' && at.projects ? (
-                    <i> · {at.projects} โปรเจกต์</i>
-                  ) : null}
-                  {at.paths.length > 0 && (
-                    <span className="rr-paths">
-                      {at.paths.map((p) => (
-                        <code key={p}>{p}</code>
-                      ))}
-                      {at.more > 0 && <i>+{at.more}</i>}
-                    </span>
-                  )}
-                </span>
-              );
-            })}
+            <Level
+              label={
+                project
+                  ? `ใต้ projects/${project}/`
+                  : 'ใต้ projects/ (ทุกโปรเจกต์)'
+              }
+              {...projectLevel(t, project)}
+            />
+            {/* Kept on screen even with a project picked, and kept second: a
+                workspace-level target (`meta/adr-*.md`) has nothing under a
+                project to measure, and printing it as this project's zero is
+                exactly the ✗-that-should-be-◐ ADR-0042 §SD3 refused. */}
+            <Level
+              label="ระดับ workspace"
+              level={t.levels.workspace}
+              scoped={false}
+              muted={Boolean(project)}
+            />
           </span>
         </span>
       ))}
-      {pointsAtNothing(row) && (
+      {pointsAtNothingIn(row, project) && (
         <em className="warn">
-          ทะเบียนสั่งให้เขียนไฟล์ แต่ยังไม่มีใครเขียนสักใบ — ช่องนี้ว่างจริง
+          {project ? (
+            <>
+              ทะเบียนสั่งให้เขียนไฟล์ แต่ <code>{project}</code> ยังไม่มีสักใบ —
+              ช่องนี้ว่าง<b>เฉพาะโปรเจกต์นี้</b>
+            </>
+          ) : (
+            <>ทะเบียนสั่งให้เขียนไฟล์ แต่ยังไม่มีใครเขียนสักใบ — ช่องนี้ว่างจริง</>
+          )}
         </em>
       )}
       {records.rejected.length > 0 && (
@@ -248,6 +295,45 @@ function Files({ row }: { row: RegisterRow }) {
       )}
       {records.note && <em>{records.note}</em>}
     </>
+  );
+}
+
+/** One level of one target. Split out because the picker made the two levels
+ *  behave differently: the project half narrows, the workspace half cannot —
+ *  and the screen has to keep saying which is which. */
+function Level({
+  label,
+  level,
+  scoped,
+  muted = false,
+}: {
+  label: string;
+  /** `null` when a project is picked but the payload predates the per-project
+   *  split — *the board cannot tell*, which is not the same as zero. */
+  level: RegisterLevel | null;
+  scoped: boolean;
+  muted?: boolean;
+}) {
+  if (level === null) {
+    return (
+      <span className="rr-level">
+        {label} <span className="rr-dark">payload รุ่นเก่า — แยกรายโปรเจกต์ไม่ได้</span>
+      </span>
+    );
+  }
+  return (
+    <span className={`rr-level${muted ? ' muted' : ''}`}>
+      {label} <b className={level.have === 0 ? 'warn' : ''}>{level.have}</b> ที่
+      {!scoped && level.projects ? <i> · {level.projects} โปรเจกต์</i> : null}
+      {level.paths.length > 0 && (
+        <span className="rr-paths">
+          {level.paths.map((p) => (
+            <code key={p}>{p}</code>
+          ))}
+          {level.more > 0 && <i>+{level.more}</i>}
+        </span>
+      )}
+    </span>
   );
 }
 
