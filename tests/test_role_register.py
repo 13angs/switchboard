@@ -278,3 +278,92 @@ def test_the_overview_carries_the_register(tmp_path):
     assert payload["register"]["present"] is True
     assert len(payload["register"]["roles"]) == 7
     assert payload["register"]["source"] == "team-os/people/roles.md"
+
+
+# ── ADR-0043 Amendment (2) — `kind` moves from the cell to the target (S35/S36) ──
+
+ROLES_MIXED = ROLES.replace(
+    "| `tech-lead` | `build` | `software-design` · `ux-ui` | "
+    "`projects/<n>/docs/adr/` + living HLD `docs/design/*` |",
+    "| `tech-lead` | `build` | `software-design` · `ux-ui` | "
+    "`projects/<n>/docs/adr/` + living HLD `docs/design/*` "
+    "+ artifact ที่ sign-off แล้ว `surface:pr-body` (URL + version) |",
+)
+
+
+def test_a_mixed_cell_carries_both_kinds_of_target(tmp_path):
+    """§A5 — a cell naming both a file and a surface prints both, and the
+    cell-level summary becomes `mixed` rather than reporting only one half."""
+    records = _row(
+        workspace.role_register(_workspace(tmp_path, ROLES_MIXED)), "tech-lead"
+    )["records"]
+
+    assert records["kind"] == "mixed"
+    kinds = {t["kind"] for t in records["targets"]}
+    assert kinds == {"file", "surface"}
+
+    surface = next(t for t in records["targets"] if t["kind"] == "surface")
+    assert surface["token"] == "surface:pr-body"
+    assert surface["slug"] == "pr-body"
+    # A surface is not glob'd or counted (§A8) — it carries no location fields.
+    assert "glob" not in surface
+    assert "levels" not in surface
+
+    files = [t for t in records["targets"] if t["kind"] == "file"]
+    assert {t["token"] for t in files} == {"projects/<n>/docs/adr/", "docs/design/*"}
+
+
+def test_a_cell_with_only_file_targets_still_summarises_as_files(tmp_path):
+    """§A5 — the third value is additive; a cell that never named a surface
+    keeps the same summary it always had."""
+    reg = workspace.role_register(_workspace(tmp_path))
+    for role in ("cto", "tech-lead", "devops", "product-owner"):
+        assert _row(reg, role)["records"]["kind"] == "files"
+
+
+def test_a_token_that_is_neither_a_path_nor_a_surface_survives_in_the_note(tmp_path):
+    """§A7 — RED case measured directly against `_resolve_records()` in the
+    amendment's own evidence section: a backtick token that is not path-shaped
+    and not a `surface:` token used to be stripped from `targets` **and**
+    `note` by the old `_CODE_TOKEN.sub("", raw)` blanket wipe."""
+    roles = ROLES.replace(
+        "`meta/adr-*.md`",
+        "`meta/adr-*.md` — ใบ `type: surface` ที่ถือ url:",
+    )
+    records = _row(workspace.role_register(_workspace(tmp_path, roles)), "cto")[
+        "records"
+    ]
+
+    # The file target is still resolved — unaffected by the token beside it.
+    assert records["kind"] == "files"
+    assert [t["token"] for t in records["targets"]] == ["meta/adr-*.md"]
+    # The non-target token's text is not thrown away with its backticks.
+    assert "type: surface" in records["note"]
+
+
+def test_a_rejected_token_is_still_cut_from_the_note(tmp_path):
+    """§A7 only spares tokens that fell through *both* checks — a token
+    rejected for walking outside the workspace is still a target-shaped
+    decision, reported via `rejected`, and still cut from the prose."""
+    roles = ROLES.replace("`meta/adr-*.md`", "`../../etc/*` — ดูรายละเอียด")
+    records = _row(workspace.role_register(_workspace(tmp_path, roles)), "cto")[
+        "records"
+    ]
+
+    assert records["rejected"] == ["../../etc/*"]
+    assert records["targets"] == []
+    assert records["kind"] == "not-files"
+    assert "../../etc/*" not in records["note"]
+    assert "ดูรายละเอียด" in records["note"]
+
+
+def test_points_at_nothing_filters_by_target_kind_not_cell_kind(tmp_path):
+    """§A5 — `pointsAtNothing`'s Python-side twin does not exist (the check is
+    TS-only, `role-register.ts`), but the payload it filters on is built here:
+    a mixed cell must carry each target's own `kind` so that filter works."""
+    records = _row(
+        workspace.role_register(_workspace(tmp_path, ROLES_MIXED)), "tech-lead"
+    )["records"]
+    file_targets = [t for t in records["targets"] if t["kind"] == "file"]
+    assert len(file_targets) == 2
+    assert all("levels" in t for t in file_targets)

@@ -328,7 +328,8 @@ export interface RegisterLevel {
 /** One location named by a role's `บันทึกผลลงที่` cell, resolved at **both**
  *  levels — always. `docs/runbooks/` is real at the workspace root and under a
  *  project, so stopping at the first hit would delete half the answer. */
-export interface RegisterTarget {
+export interface RegisterFileTarget {
+  kind: 'file';
   token: string;
   /** The token after `<n>`-style placeholders become `*`. Printed beside the
    *  raw token so the substitution is never invisible. */
@@ -336,20 +337,35 @@ export interface RegisterTarget {
   levels: { workspace: RegisterLevel; project: RegisterLevel };
 }
 
+/** A `surface:<slug>` token (ADR-0043 Amendment (2) §A6) — a place this role
+ *  records into that is not a file in the tree (a PR body, an external doc).
+ *  Not glob'd, not counted: the board reads only files committed at HEAD, and
+ *  a surface's real location is not one (§A8). */
+export interface RegisterSurfaceTarget {
+  kind: 'surface';
+  token: string;
+  slug: string;
+}
+
+export type RegisterTarget = RegisterFileTarget | RegisterSurfaceTarget;
+
 /** The register's fourth column and what the tree says about it.
  *
  *  `kind: "not-files"` is a real answer, not a missing one (ADR-0043 §SD4):
  *  `senior-developer` and `developer` close in a commit body and `qa` in a PR
  *  thread, so an empty `targets` there means *the register does not ask for a
- *  file* — never *the file is not written yet*. */
+ *  file* — never *the file is not written yet*. `"mixed"` (Amendment (2) §A5)
+ *  is a cell that names both a file and a surface — `tech-lead` and
+ *  `product-owner` are exactly that. */
 export interface RegisterRecords {
   raw: string;
   text: string;
-  kind: 'files' | 'not-files';
+  kind: 'files' | 'not-files' | 'mixed';
   targets: RegisterTarget[];
   /** Tokens refused for walking outside the workspace — reported, not dropped. */
   rejected: string[];
-  /** Prose left in the cell after its path tokens, verbatim from roles.md. */
+  /** Prose left in the cell after its path/surface tokens, verbatim from
+   *  roles.md (§A7 — a token that is neither must survive here, not vanish). */
   note: string;
 }
 

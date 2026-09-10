@@ -3,7 +3,7 @@ import type {
   WorkspaceRegister,
   RegisterRole,
   RegisterLevel,
-  RegisterTarget,
+  RegisterFileTarget,
 } from './api';
 import { roleSlug } from './project-gaps';
 
@@ -109,15 +109,23 @@ export function assignmentQuery(slug: string): string {
   return `git log --all --grep '^Assignment: .*/${slug}/'`;
 }
 
-/** Every target of a row resolved to zero paths at both levels. Used to warn
- *  that a pattern the register names points at nothing yet — which is a
- *  different sentence from "this role does not record into a file". */
+/** Every *file* target of a row resolved to zero paths at both levels. Used to
+ *  warn that a pattern the register names points at nothing yet — which is a
+ *  different sentence from "this role does not record into a file".
+ *
+ *  Filters on each target's own `kind` (Amendment (2) §A5), not the cell's
+ *  summary — a `mixed` cell (`tech-lead`, `product-owner`) has both a file and
+ *  a surface, and the surface half is never counted (§A8), so checking the
+ *  cell-level `kind !== 'files'` would stop warning about the file half the
+ *  moment a surface joined it. */
 export function pointsAtNothing(row: RegisterRow): boolean {
   const records = row.ownership?.records;
-  if (!records || records.kind !== 'files' || records.targets.length === 0) {
-    return false;
-  }
-  return records.targets.every(
+  if (!records) return false;
+  const files = records.targets.filter(
+    (t): t is RegisterFileTarget => t.kind === 'file',
+  );
+  if (files.length === 0) return false;
+  return files.every(
     (t) => t.levels.workspace.have === 0 && t.levels.project.have === 0,
   );
 }
@@ -137,7 +145,7 @@ export function pointsAtNothing(row: RegisterRow): boolean {
  * shape rather than guessing.
  */
 export function projectLevel(
-  target: RegisterTarget,
+  target: RegisterFileTarget,
   project: string | null,
 ): { level: RegisterLevel | null; scoped: boolean } {
   const level = target.levels.project;
@@ -151,13 +159,16 @@ export function projectLevel(
 }
 
 /** Whether a row still points at anything once the picker narrows it. Used to
- *  print *this project has none* without claiming the register asked for none. */
+ *  print *this project has none* without claiming the register asked for none.
+ *  Filters to file targets only — same reason as `pointsAtNothing` above. */
 export function pointsAtNothingIn(row: RegisterRow, project: string | null): boolean {
   const records = row.ownership?.records;
-  if (!records || records.kind !== 'files' || records.targets.length === 0) {
-    return false;
-  }
-  return records.targets.every((t) => {
+  if (!records) return false;
+  const files = records.targets.filter(
+    (t): t is RegisterFileTarget => t.kind === 'file',
+  );
+  if (files.length === 0) return false;
+  return files.every((t) => {
     const { level } = projectLevel(t, project);
     const inProject = level ? level.have : 0;
     // With a project picked, a workspace-level match is not this project's
