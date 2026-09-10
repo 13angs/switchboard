@@ -125,6 +125,11 @@ def workspace_overview(
         "gaps": _scan_gaps(root),
         "dispatch": dispatch,
         "pipeline": pipeline_surfaces(root, ownership),
+        # ADR-0043 §SD2 — the same `ownership` walk, one screen further: the
+        # belt asks which stages a role holds, the register asks who the role
+        # is. Both ride the HEAD-cached payload because both are functions of
+        # the tree, and the page joins the register to `dispatch` itself.
+        "register": role_register(root, ownership),
     }
 
     if head:
@@ -597,6 +602,14 @@ def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
 
 _OWNERSHIP_HEADING = "แกนความเป็นเจ้าของ"
 
+# A discipline is a folder name under `team/`, and the register writes them as
+# back-ticked slugs and nothing else. Matched by the shape we *accept* rather
+# than by the shapes we reject (ADR-0043 §SD5): `qa`'s cell is an em-dash
+# followed by a parenthesised pointer at `ways-of-working/`, which the split on
+# `·` used to hand back as two disciplines that never existed. A reject-list
+# written against today's wording of that pointer would let tomorrow's through.
+_DISCIPLINE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
 # `dev` is read by both `senior-developer` and `developer` in the ownership
 # table (roles.md § แกนความเป็นเจ้าของ) — the escalation is a judgment call the
 # row itself does not carry, so an unqualified `team: dev` lands on the role
@@ -609,17 +622,30 @@ def _slug(text: str) -> str:
 
 
 def _parse_ownership(path: Path) -> dict[str, dict]:
-    """role slug → {office, disciplines}, from roles.md § แกนความเป็นเจ้าของ.
+    """role slug → the whole row, from roles.md § แกนความเป็นเจ้าของ.
 
     Same anchored-on-heading approach as `_parse_role_tiers`: the table's
     prose wording is free to change, but its position under this heading is
     the contract. Read once per call rather than cached alongside the tier
     table — this table is small and dispatch already re-reads roles.md.
 
-    Both columns come off one walk because they are one row of one table: the
+    Every column comes off one walk because they are one row of one table: the
     office is the second cell of the same line the disciplines sit on, and
     reading them apart would be two parsers that can disagree about which rows
     are rows (ADR-0036 §SD3 leans on the office being right here, not guessed).
+    ADR-0043 §SD2 extends that to the fourth cell — `บันทึกผลลงที่`, which had
+    no reader at all until S33 — for exactly the same reason.
+
+    Keys per role:
+      office, disciplines             — unchanged, `_stations()` and
+                                        role_activity.py stand on them
+      disciplines_raw                 — the cell as roles.md writes it
+      disciplines_dropped             — tokens that are not discipline-shaped,
+                                        reported rather than silently binned
+      records_raw                     — the fourth cell, verbatim. Resolving it
+                                        against the tree needs the workspace
+                                        root, which this function does not
+                                        have; `role_register()` does that.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -647,12 +673,19 @@ def _parse_ownership(path: Path) -> dict[str, dict]:
             continue  # separator row
         if role in ("role", "แกนความเป็นเจ้าของ"):
             continue  # header row
-        disciplines = [
-            _slug(d) for d in disciplines_cell.split("·") if _slug(d) and _slug(d) != "—"
-        ]
+        disciplines: list[str] = []
+        dropped: list[str] = []
+        for token in disciplines_cell.split("·"):
+            slug = _slug(token)
+            if not slug or slug == "—":
+                continue  # the register's own "this role holds none"
+            (disciplines if _DISCIPLINE_SLUG.match(slug) else dropped).append(slug)
         out[role] = {
             "office": "" if set(office) <= set("-: ") else office,
             "disciplines": disciplines,
+            "disciplines_raw": disciplines_cell,
+            "disciplines_dropped": dropped,
+            "records_raw": _cell_raw(cells, 3).strip(),
         }
     return out
 
@@ -660,6 +693,171 @@ def _parse_ownership(path: Path) -> dict[str, dict]:
 def _parse_role_disciplines(path: Path) -> dict[str, list[str]]:
     """role slug → disciplines it owns. Thin view over `_parse_ownership`."""
     return {role: row["disciplines"] for role, row in _parse_ownership(path).items()}
+
+
+# ── role register (ADR-0043) ─────────────────────────────────────────────────
+#
+# The seven-row table S33 asks the board to print. Nothing new is *measured*
+# here: § แกนความเป็นเจ้าของ already had a reader (it just threw the fourth
+# column away) and § โมเดลต่อ role already reaches the page as `dispatch`. What
+# this adds is the fourth column's own answer — *does the place this role
+# records into exist yet* — which needs the tree, and so cannot happen in the
+# browser where the two registers are joined.
+
+_ROLE_REGISTER_FILE = ("team-os", "people", "roles.md")
+
+# `projects/<n>/docs/adr/` — the register writes a project name as a
+# placeholder, the way the whole workspace does. Turned into a glob before it
+# is resolved, and the resolved form travels next to the raw token so the
+# substitution is never invisible on screen (ADR-0043 §SD3).
+_PLACEHOLDER = re.compile(r"<[^>]*>")
+
+# How many resolved paths a target carries into the payload before it just says
+# how many more there are. This column is evidence that a pattern points at
+# something real, not a file browser.
+_PATH_SAMPLE = 6
+
+
+def role_register(root: Path, ownership: Optional[dict] = None) -> dict:
+    """The register as one table: seven roles, every column of the row.
+
+    Args:
+        root: absolute workspace root
+        ownership: `_parse_ownership()` output, passed in when the caller
+            already has it — `workspace_overview` reads it for the belt first.
+
+    Row order is § แกนความเป็นเจ้าของ's own, not § โมเดลต่อ role's: the two
+    tables are genuinely ordered differently, and this screen is the first one
+    that prints both halves of a row side by side (ADR-0043 §SD7).
+    """
+    source = "/".join(_ROLE_REGISTER_FILE)
+    if ownership is None:
+        ownership = _parse_ownership(root.joinpath(*_ROLE_REGISTER_FILE))
+    roles = [
+        {
+            "role": slug,
+            "office": row.get("office", ""),
+            "disciplines": row.get("disciplines", []),
+            "disciplines_raw": row.get("disciplines_raw", ""),
+            "disciplines_dropped": row.get("disciplines_dropped", []),
+            "records": _resolve_records(root, row.get("records_raw", "")),
+        }
+        for slug, row in ownership.items()
+    ]
+    return {
+        "source": source,
+        "section": _OWNERSHIP_HEADING,
+        "present": bool(roles),
+        "reason": "" if roles else f"ไม่พบตาราง § {_OWNERSHIP_HEADING} ใน {source}",
+        "roles": roles,
+        # ADR-0043 §SD6 — S19's column, declared unread rather than parsed on
+        # the way past. The statement is the reader's about itself, which is
+        # why it is safe to hold here: `_parse_role_tiers` walks columns 1–3 of
+        # § โมเดลต่อ role and skips this one on purpose (its own comment says
+        # so). Anything about *what the column contains* stays in roles.md.
+        "heavy_when": {
+            "readable": False,
+            "column": "ขึ้น heavy เมื่อ",
+            "slice": "S19",
+            "reason": (
+                "`_parse_role_tiers()` อ่าน `§ โมเดลต่อ role` แค่คอลัมน์ 1–3 "
+                "(role · default · effort) แล้วข้ามคอลัมน์นี้โดยเจตนา "
+                "⇒ บอร์ดยังปักหมุด tier ตาม default เสมอ"
+            ),
+        },
+    }
+
+
+def _resolve_records(root: Path, raw: str) -> dict:
+    """The `บันทึกผลลงที่` cell, and whether the tree carries what it names.
+
+    The distinction this function exists for (ADR-0043 §SD4): a cell with no
+    path-shaped token is the register saying *this role does not record into a
+    file* — `senior-developer` and `developer` close in a commit body, `qa` in
+    a PR thread — which is a different answer from *the file is not written
+    yet*, and rendering both as an empty cell sends a reader off to create
+    files roles.md never asked for. `kind` carries that apart.
+    """
+    targets: list[dict] = []
+    rejected: list[str] = []
+    for token in _CODE_TOKEN.findall(raw):
+        if not _looks_like_path(token):
+            continue  # `platform-core` in devops' cell is a project, not a place
+        if not _safe_glob(token):
+            rejected.append(token)
+            continue
+        targets.append(_resolve_record_target(root, token))
+    return {
+        "raw": raw,
+        "text": _strip_md(raw),
+        "kind": "files" if targets else "not-files",
+        "targets": targets,
+        "rejected": rejected,
+        # Same shape `_signatures` carries its leftover prose in: the wording
+        # reaches the screen from roles.md rather than from a sentence retyped
+        # here (`ADR เมื่อการตัดสินผูกทั้งระบบ` is the whole of what makes
+        # senior-developer's line different from developer's).
+        "note": _strip_md(_CODE_TOKEN.sub("", raw)).strip(" ·—-"),
+    }
+
+
+def _resolve_record_target(root: Path, token: str) -> dict:
+    """One pattern, resolved at **both** levels — always.
+
+    ADR-0043 §SD3, and the one place this reader deliberately parts company
+    with `_count_target()` (ADR-0041 §SD6): that one tries the root, and stops
+    if it matches, on the measured grounds that no § 7.2 token collides. This
+    register is where the collision is real — `docs/runbooks/` exists at the
+    workspace root *and* under a project — so stopping at the first hit would
+    delete half the answer with nothing on screen saying it had been deleted.
+    """
+    pattern = _PLACEHOLDER.sub("*", token).strip().rstrip("/")
+    at_root = _rel_matches(root, root, pattern)
+    hits: list[str] = []
+    holders = 0
+    projects_dir = root / "projects"
+    if projects_dir.is_dir():
+        for child in sorted(projects_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            found = _rel_matches(root, child, pattern)
+            if found:
+                holders += 1
+                hits.extend(found)
+    project = _sample(sorted(hits))
+    project["projects"] = holders
+    return {
+        "token": token,
+        # Printed beside the token: a `<n>` that became `*` is a substitution
+        # the reader gets to see, not one they have to know about.
+        "glob": pattern,
+        "levels": {"workspace": _sample(at_root), "project": project},
+    }
+
+
+def _rel_matches(root: Path, base: Path, pattern: str) -> list[str]:
+    """Workspace-relative posix paths `pattern` matches under `base`."""
+    if not pattern:
+        return []
+    try:
+        found = list(base.glob(pattern))
+    except (ValueError, OSError):
+        return []
+    out = []
+    for match in found:
+        try:
+            out.append(match.relative_to(root).as_posix())
+        except ValueError:
+            continue
+    return sorted(out)
+
+
+def _sample(paths: list[str]) -> dict:
+    return {
+        "have": len(paths),
+        "paths": paths[:_PATH_SAMPLE],
+        "more": max(0, len(paths) - _PATH_SAMPLE),
+    }
 
 
 def _default_role_for_team(

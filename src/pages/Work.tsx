@@ -29,6 +29,7 @@ import {
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import { RoleActivityDialog } from './RoleActivity';
+import { RoleRegister } from './RoleRegister';
 import { useToast, ToastContainer } from '../components/shared/Toast';
 import './Work.css';
 
@@ -55,6 +56,20 @@ const HIDDEN_COLUMN = 'off';
  *  `done` stays closed: a finished piece has nothing to prepare, and reopening
  *  one means editing the file, not pressing a button on a board that only reads. */
 const DISPATCHABLE = new Set(['running', 'next', 'todo', 'owner']);
+
+/** The two screens of `/work` (ADR-0043 §SD1). `board` is not merely the first
+ *  entry — it is the only state the page ever starts in, and there is nothing
+ *  anywhere that can change that: no `?view=`, no `localStorage`. A session
+ *  must never open a screen it did not ask for, which is why this is the one
+ *  piece of `/work` state deliberately *not* pinned in the URL the way
+ *  `?project=` is (S20 wanted a pinnable tab; a pinned screen is a different
+ *  thing entirely). */
+const VIEWS = [
+  { key: 'board', label: 'บอร์ด' },
+  { key: 'register', label: 'ทะเบียน role' },
+] as const;
+
+type View = (typeof VIEWS)[number]['key'];
 
 export function WorkPage() {
   const [data, setData] = useState<WorkspaceResponse | null>(null);
@@ -84,6 +99,8 @@ export function WorkPage() {
   // so it is opened by a press and never on load: nothing about it belongs in
   // the board's own fetch.
   const [measuring, setMeasuring] = useState(false);
+  // ADR-0043 §SD1 — always `board`, never restored from anywhere.
+  const [view, setView] = useState<View>('board');
   // The board shows one project at a time, and which one lives in the URL so a
   // tab can be pinned to it (slices.md S20 §ก–§ข). Read once: nothing else
   // rewrites the query string, and the picker below keeps both in step.
@@ -145,6 +162,24 @@ export function WorkPage() {
       </header>
 
       <div className="work-subbar">
+        {/* A screen picker, not a third action button: the two beside it
+            (*สายพานต่อ role* · *รีเฟรช*) do something, this one decides what
+            you are looking at. ADR-0043 §SD1 — and the subbar itself is
+            identical on both screens, so ADR-0041's panel is neither moved,
+            hidden, nor duplicated. */}
+        <div className="work-views" role="tablist" aria-label="จอของ /work">
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              role="tab"
+              aria-selected={view === v.key}
+              className={`work-view${view === v.key ? ' on' : ''}`}
+              onClick={() => setView(v.key)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
         {data && (
           <span className="provenance" title={data.stale_by}>
             HEAD <code>{data.head ? data.head.slice(0, 7) : 'ไม่ใช่ git'}</code>
@@ -170,7 +205,7 @@ export function WorkPage() {
 
       {error && <div className="work-error">อ่านไม่ได้: {error}</div>}
 
-      {data && data.gaps.present && (
+      {view === 'board' && data && data.gaps.present && (
         <section className="gap-strip" aria-label="ช่องว่างของโครงเอกสาร">
           <span className="gap-title">ช่องว่างที่ประกาศไว้</span>
           <span className="gap-n total">{data.gaps.total}</span>
@@ -182,7 +217,9 @@ export function WorkPage() {
         </section>
       )}
 
-      {data && data.projects.length === 0 && !loading && (
+      {data && view === 'register' && <RoleRegister data={data} />}
+
+      {view === 'board' && data && data.projects.length === 0 && !loading && (
         <div className="work-empty">
           <p>
             ยังไม่มีโปรเจกต์ไหนมี <code>slices.md</code>
@@ -197,9 +234,11 @@ export function WorkPage() {
       {/* Above the picker on purpose: the calendar is the day, not a project
           (slices.md S20 §ง). Filtering it would hide blocks the owner still
           owes time to just because they belong to another piece of work. */}
-      <DayCalendar dispatch={data?.dispatch ?? null} onDispatched={onDispatched} />
+      {view === 'board' && (
+        <DayCalendar dispatch={data?.dispatch ?? null} onDispatched={onDispatched} />
+      )}
 
-      {data && data.projects.length > 0 && (
+      {view === 'board' && data && data.projects.length > 0 && (
         <ProjectPicker
           projects={data.projects}
           value={selection.value}
@@ -208,7 +247,8 @@ export function WorkPage() {
         />
       )}
 
-      {data &&
+      {view === 'board' &&
+        data &&
         selection.shown.map((p) => (
           <ProjectBoard
             key={p.name}

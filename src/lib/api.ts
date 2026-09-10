@@ -309,6 +309,77 @@ export interface WorkspacePipeline {
   };
 }
 
+/** How much of the tree one pattern from the register actually points at.
+ *  `paths` is capped and `more` says how many were left off — the column is
+ *  evidence that a place exists, not a file browser (ADR-0043 §SD3). */
+export interface RegisterLevel {
+  have: number;
+  paths: string[];
+  more: number;
+  /** `project` level only: how many folders under `projects/` carry it. */
+  projects?: number;
+}
+
+/** One location named by a role's `บันทึกผลลงที่` cell, resolved at **both**
+ *  levels — always. `docs/runbooks/` is real at the workspace root and under a
+ *  project, so stopping at the first hit would delete half the answer. */
+export interface RegisterTarget {
+  token: string;
+  /** The token after `<n>`-style placeholders become `*`. Printed beside the
+   *  raw token so the substitution is never invisible. */
+  glob: string;
+  levels: { workspace: RegisterLevel; project: RegisterLevel };
+}
+
+/** The register's fourth column and what the tree says about it.
+ *
+ *  `kind: "not-files"` is a real answer, not a missing one (ADR-0043 §SD4):
+ *  `senior-developer` and `developer` close in a commit body and `qa` in a PR
+ *  thread, so an empty `targets` there means *the register does not ask for a
+ *  file* — never *the file is not written yet*. */
+export interface RegisterRecords {
+  raw: string;
+  text: string;
+  kind: 'files' | 'not-files';
+  targets: RegisterTarget[];
+  /** Tokens refused for walking outside the workspace — reported, not dropped. */
+  rejected: string[];
+  /** Prose left in the cell after its path tokens, verbatim from roles.md. */
+  note: string;
+}
+
+/** One row of `roles.md § แกนความเป็นเจ้าของ`, every column of it. */
+export interface RegisterRole {
+  role: string;
+  office: string;
+  disciplines: string[];
+  /** The discipline cell as roles.md writes it — printed beside the parsed
+   *  result so a wrong filter is visible rather than silent. */
+  disciplines_raw: string;
+  /** Text in that cell that is not discipline-shaped (`qa`'s cell points at
+   *  `ways-of-working/` after an em-dash). Reported, never silently binned. */
+  disciplines_dropped: string[];
+  records: RegisterRecords;
+}
+
+/** The seven-row register the second screen prints (ADR-0043). Joined to
+ *  `dispatch` in the browser, which is where the tier half already lives. */
+export interface WorkspaceRegister {
+  source: string;
+  section: string;
+  present: boolean;
+  reason: string;
+  roles: RegisterRole[];
+  /** S19's column, declared unread rather than parsed on the way past
+   *  (ADR-0043 §SD6). `readable` is false today and the screen says so. */
+  heavy_when: {
+    readable: boolean;
+    column: string;
+    slice: string;
+    reason: string;
+  };
+}
+
 export interface WorkspaceResponse {
   generated_at: string;
   repo: string;
@@ -325,6 +396,7 @@ export interface WorkspaceResponse {
     | { present: true; total: number; closed: number; reduced: number; open: number };
   dispatch: WorkspaceDispatch;
   pipeline: WorkspacePipeline;
+  register: WorkspaceRegister;
 }
 
 
