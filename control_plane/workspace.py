@@ -109,6 +109,11 @@ def workspace_overview(
     projects = _scan_projects(root, slots)
     dispatch = _scan_dispatch(root)
     _attach_default_roles(root, projects, dispatch)
+    # ADR-0041 §SD1 — both belt columns are functions of HEAD, so they ride the
+    # HEAD-cached payload and the page joins them to the windowed
+    # /roles/activity itself. The register they are attributed to is the same
+    # roles.md table dispatch already read.
+    ownership = _parse_ownership(root / "team-os" / "people" / "roles.md")
     payload = {
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(),
         "repo": str(root),
@@ -119,6 +124,7 @@ def workspace_overview(
         "totals": _totals(projects),
         "gaps": _scan_gaps(root),
         "dispatch": dispatch,
+        "pipeline": pipeline_surfaces(root, ownership),
     }
 
     if head:
@@ -967,3 +973,364 @@ def _ritual_reads(definitions: list[tuple[str, str]], key: str) -> str:
     """
     hits = [reads for name, reads in definitions if key.lower() in name.lower()]
     return hits[0] if len(hits) == 1 else ""
+
+
+# ── pipeline surfaces (ADR-0041) ─────────────────────────────────────────────
+#
+# The two belt-shaped columns of the /work panel: which station a role holds,
+# and where it signs when a project closes. Both are read from
+# docs/sops/sop-pipeline-handoff.md and are functions of HEAD, which is why they
+# ride this module's payload rather than the windowed one (§SD1) — role_activity
+# stays a count over a *period*, exactly as ADR-0039 §SD1 drew the line.
+#
+# Nothing about the belt is pinned here. The station `close` was written into
+# that SOP on 2026-09-10, one day before this reader existed; a list held in
+# this file would already have been wrong, and wrong silently.
+
+_PIPELINE_FILE = ("docs", "sops", "sop-pipeline-handoff.md")
+
+# The stage table is found by its *column headers*, not by the heading above it
+# (`## Scope — the pipeline and its batons`) — the same choice ADR-0036 §SD2
+# made for rituals.md and the opposite of _SLOTS_HEADING. `From stage` / `To
+# stage` are English keywords the table itself owns; the heading is prose the
+# SOP's author may re-word. A renamed column legitimately turns this column off;
+# a re-worded heading must not.
+_STAGE_COLUMNS = ("from stage", "to stage")
+
+# § 7.2's seven signatures. `ลงที่ไหน` is Thai because no English keyword was
+# declared for it — read as-is rather than guessed at from position, since the
+# `role` column alone would also match the stage table's neighbours.
+_SIGNATURE_COLUMNS = ("role", "ลงที่ไหน")
+
+_CODE_TOKEN = re.compile(r"`([^`]+)`")
+
+
+def pipeline_surfaces(root: Path, ownership: Optional[dict] = None) -> dict:
+    """The belt as two tables: stations per role, and closing surfaces per role.
+
+    Args:
+        root: absolute workspace root
+        ownership: `_parse_ownership()` output, passed in when the caller
+            already has it. The register is always roles.md — never the set of
+            stage names this SOP happens to contain (ADR-0039 §SD2).
+
+    The two halves fail independently (§SD7): a renamed stage column blanks the
+    station column and leaves the signatures readable, because they are two
+    tables that merely share a file.
+    """
+    source = "/".join(_PIPELINE_FILE)
+    path = root.joinpath(*_PIPELINE_FILE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        missing = f"ไม่พบ {source}"
+        return {
+            "source": source,
+            "stations": {"present": False, "reason": missing, "stages": [], "per_role": {}},
+            "signatures": {
+                "present": False,
+                "reason": missing,
+                "rows": [],
+                "projects": _project_count(root),
+                "enforcement": _no_enforcement(),
+            },
+        }
+
+    if ownership is None:
+        ownership = _parse_ownership(root / "team-os" / "people" / "roles.md")
+
+    return {
+        "source": source,
+        "stations": _stations(text, ownership, source),
+        "signatures": _signatures(text, root, source),
+    }
+
+
+def _stations(text: str, ownership: dict[str, dict], source: str) -> dict:
+    """Stage → the roles that declare its discipline, in the SOP's own order.
+
+    The map is `_parse_ownership()` turned around: a stage belongs to *every*
+    role whose discipline list names it, so `dev` lands on both
+    `senior-developer` and `developer` (§SD3). `_DISCIPLINE_TIE_BREAK` is
+    deliberately not used — it answers "which single role does an unqualified
+    `team: dev` dispatch to", and narrowing a register to one row would print a
+    screen that argues with roles.md.
+    """
+    found = _table_by_columns(_markdown_tables(text), _STAGE_COLUMNS)
+    if found is None:
+        return {
+            "present": False,
+            "reason": (
+                "ไม่พบตารางที่มีคอลัมน์ "
+                + " · ".join(f"`{c}`" for c in _STAGE_COLUMNS)
+                + f" ใน {source}"
+            ),
+            "stages": [],
+            "per_role": {},
+        }
+    index, rows = found
+
+    # Both columns, because the far end of the belt appears as somebody's `To`
+    # one revision before it earns a row of its own — which is exactly how
+    # `close` entered on 2026-09-10.
+    stages: list[str] = []
+    for cells in rows:
+        for column in _STAGE_COLUMNS:
+            i = index[column]
+            if i >= len(cells):
+                continue
+            for token in _CODE_TOKEN.findall(cells[i]):
+                if token not in stages:
+                    stages.append(token)
+
+    holders = {
+        stage: [
+            slug
+            for slug, row in ownership.items()
+            if stage in row.get("disciplines", [])
+        ]
+        for stage in stages
+    }
+    return {
+        "present": True,
+        "reason": "",
+        # A stage nobody holds keeps its row: `close` is a gate, not a
+        # discipline (the SOP says so itself), and dropping it off screen is
+        # the same silence ADR-0039 §SD2 refused for a role with zero commits.
+        "stages": [{"stage": s, "roles": holders[s]} for s in stages],
+        "per_role": {
+            slug: [s for s in stages if slug in holders[s]] for slug in ownership
+        },
+    }
+
+
+def _signatures(text: str, root: Path, source: str) -> dict:
+    """Each role's closing surface, and whether that surface exists yet.
+
+    A cell's back-ticked tokens are its targets *when they are shaped like a
+    path*; the prose left over is the row's note, carried verbatim so §7.3's
+    "another file may answer this line" reaches the screen from the SOP rather
+    than from a sentence retyped here. `qa`'s cell names `product-owner`
+    mid-sentence, which is why shape decides and back-ticks alone do not.
+    """
+    block = _signature_block(text)
+    total = _project_count(root)
+    if block is None:
+        return {
+            "present": False,
+            "reason": (
+                "ไม่พบตารางที่มีคอลัมน์ "
+                + " · ".join(f"`{c}`" for c in _SIGNATURE_COLUMNS)
+                + f" ใน {source}"
+            ),
+            "rows": [],
+            "projects": total,
+            "enforcement": _no_enforcement(),
+        }
+    index, rows, trailer = block
+
+    out: list[dict] = []
+    for cells in rows:
+        role = _slug(_strip_md(_cell(cells, index["role"])))
+        if not role or set(role) <= set("-: "):
+            continue
+        cell = _cell_raw(cells, index[_SIGNATURE_COLUMNS[1]])
+        targets: list[dict] = []
+        rejected: list[str] = []
+        for token in _CODE_TOKEN.findall(cell):
+            if not _looks_like_path(token):
+                continue  # a role name, a flag, anything that is not a location
+            if not _safe_glob(token):
+                rejected.append(token)
+                continue
+            targets.append(_count_target(root, token, total))
+        out.append(
+            {
+                "role": role,
+                "closes": _strip_md(_cell(cells, index["role"] + 1)),
+                "targets": targets,
+                "rejected": rejected,
+                "note": _strip_md(_CODE_TOKEN.sub("", cell)).strip(" ·—-"),
+            }
+        )
+
+    return {
+        "present": True,
+        "reason": "",
+        "rows": out,
+        "projects": total,
+        "enforcement": _enforcement(root, trailer, [r["role"] for r in out]),
+    }
+
+
+def _signature_block(
+    text: str,
+) -> Optional[tuple[dict[str, int], list[list[str]], str]]:
+    """The §7.2 table plus the paragraph that follows it.
+
+    Walked line by line rather than through `_markdown_tables`, because the
+    prose *after* the table is half the answer — it is where the SOP declares
+    which of the seven lines a machine actually enforces — and a table parser
+    that returns only cells has thrown that position away.
+    """
+    lines = text.splitlines()
+    index: Optional[dict[str, int]] = None
+    rows: list[list[str]] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            candidate: dict[str, int] = {}
+            for n, cell in enumerate(cells):
+                name = _strip_md(cell).strip().lower()
+                for column in _SIGNATURE_COLUMNS:
+                    if name == column and column not in candidate:
+                        candidate[column] = n
+            if all(column in candidate for column in _SIGNATURE_COLUMNS):
+                index = candidate
+                i += 1
+                break
+        i += 1
+    if index is None:
+        return None
+
+    while i < len(lines) and lines[i].strip().startswith("|"):
+        cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+        if not set("".join(cells)) <= set("-: "):  # skip the separator row
+            rows.append(cells)
+        i += 1
+
+    trailer: list[str] = []
+    while i < len(lines) and not lines[i].strip().startswith("#"):
+        trailer.append(lines[i])
+        i += 1
+    return index, rows, "\n".join(trailer).strip()
+
+
+def _no_enforcement() -> dict:
+    return {
+        "declared": False,
+        "roles": [],
+        "mechanism": "",
+        "mechanism_exists": False,
+        "enforced": 0,
+        "unenforced": 0,
+        "total": 0,
+    }
+
+
+def _enforcement(root: Path, trailer: str, roles: list[str]) -> dict:
+    """Which of the seven lines a machine actually holds — read from §7.2's own
+    warning paragraph.
+
+    Two things come out of it: the role slugs it names, and the first link it
+    points at (the mechanism). The count of *unenforced* lines is then computed
+    from those names — never lifted from the sentence's own "5 ใน 7". The day
+    the hook covers one more line, the screen moves because the named roles
+    moved, not because somebody remembered to edit a number in prose.
+    """
+    if not trailer:
+        return _no_enforcement()
+    named = [
+        role
+        for role in roles
+        if any(_slug(t) == role for t in _CODE_TOKEN.findall(trailer))
+    ]
+    links = _LINK_RE.findall(trailer)
+    mechanism = ""
+    if links:
+        target = links[0][1].strip()
+        if not target.startswith(("http://", "https://", "#")):
+            mechanism = posixpath.normpath(
+                posixpath.join(posixpath.dirname("/".join(_PIPELINE_FILE)), target)
+            )
+    return {
+        "declared": bool(named or mechanism),
+        "roles": named,
+        "mechanism": mechanism,
+        # Reported, not asserted: a mechanism the SOP names but the tree does
+        # not carry is a finding, and it belongs on screen rather than as a
+        # silent False in the enforced column.
+        "mechanism_exists": bool(mechanism) and (root / mechanism).exists(),
+        "enforced": len(named),
+        "unenforced": len(roles) - len(named),
+        "total": len(roles),
+    }
+
+
+def _looks_like_path(token: str) -> bool:
+    """A location, not a name. `docs/design/*` and `rollout.md` are; the
+    `product-owner` sitting mid-sentence in `qa`'s cell is not."""
+    return "/" in token or "*" in token or token.endswith(".md")
+
+
+def _safe_glob(token: str) -> bool:
+    """Refuse anything that could walk out of the workspace. The pattern comes
+    from a tracked file, so this is a guard against a mistake rather than an
+    attacker — but a reader that globs `../../../etc/*` on a re-word is not a
+    mistake anyone would catch by reading the diff of a markdown file."""
+    return not token.startswith(("/", "~")) and ".." not in token.split("/")
+
+
+def _count_target(root: Path, token: str, total: int) -> dict:
+    """How much of the workspace already carries this surface.
+
+    The level is decided by trying the workspace root first: a pattern that
+    matches there is a workspace-level location (`meta/adr-*.md`), and anything
+    else is read as project-relative (`rollout.md`, `docs/design/*`). Measured
+    2026-09-10: none of the project-relative tokens in §7.2 collide with a real
+    path at the root, so the order never has to be argued about — and if one
+    ever does, the payload says which level it resolved at.
+    """
+    at_root = list(root.glob(token))
+    if at_root:
+        return {
+            "token": token,
+            "level": "workspace",
+            "have": len(at_root),
+            "total": None,  # a file count has no denominator
+        }
+    projects_dir = root / "projects"
+    have = 0
+    if projects_dir.is_dir():
+        for child in sorted(projects_dir.iterdir()):
+            if child.is_dir() and any(child.glob(token)):
+                have += 1
+    return {"token": token, "level": "project", "have": have, "total": total}
+
+
+def _project_count(root: Path) -> int:
+    """Every folder under projects/, not only the ones the board draws a card
+    for. The close gate is every project's (§7.1 measures itself the same way,
+    at 3/33) — the one place the board counts past the edge of its own cards,
+    and the screen says so."""
+    projects_dir = root / "projects"
+    if not projects_dir.is_dir():
+        return 0
+    return sum(1 for child in projects_dir.iterdir() if child.is_dir())
+
+
+def _cell_raw(cells: list[str], i: int) -> str:
+    return cells[i] if i < len(cells) else ""
+
+
+def _table_by_columns(
+    tables: list[tuple[list[str], list[list[str]]]], columns: tuple[str, ...]
+) -> Optional[tuple[dict[str, int], list[list[str]]]]:
+    """First table whose header *starts* a cell with each named column.
+
+    Prefix-matched rather than exact, unlike `_ritual_table`: these headers
+    carry a parenthetical gloss the SOP wrote for its human readers
+    (`From stage (discipline)`), and that gloss is prose which may be re-worded.
+    """
+    for header, rows in tables:
+        index: dict[str, int] = {}
+        for i, cell in enumerate(header):
+            name = _strip_md(cell).strip().lower()
+            for column in columns:
+                if name.startswith(column) and column not in index:
+                    index[column] = i
+        if all(column in index for column in columns):
+            return index, rows
+    return None

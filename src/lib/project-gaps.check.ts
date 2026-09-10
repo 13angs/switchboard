@@ -6,7 +6,7 @@
  * role has no work here", and an unreadable role table reading as "no gaps".
  * Run: npm run check:gaps
  */
-import { projectGaps } from "./project-gaps";
+import { projectGaps, rowsPerRole, roleSlug } from "./project-gaps";
 import type { WorkspaceProject, WorkspaceResponse } from "./api";
 
 function assert(cond: unknown, msg: string): asserts cond {
@@ -65,7 +65,7 @@ assert(
 
 // ── a `✅` row still means the role has work here ──
 assert(
-  gaps.rowsPerRole["Tech Lead"] === 1,
+  gaps.rowsPerRole[roleSlug("Tech Lead")] === 1,
   "a done row counts: the question is 'ever had work', not 'open now'",
 );
 assert(
@@ -79,7 +79,7 @@ assert(
 
 // ── a row with no resolved role belongs to nobody, and inflates nobody ──
 assert(
-  gaps.rowsPerRole["Developer"] === 2,
+  gaps.rowsPerRole[roleSlug("Developer")] === 2,
   "the null-role row is not silently credited to the project's default",
 );
 
@@ -102,6 +102,26 @@ assert(
 assert(
   dark.missingSlots.length === 3,
   "the slot axis keeps working when the role axis cannot",
+);
+
+// ── the counter behind both screens is one function (ADR-0041 §SD5) ──
+const second: WorkspaceProject = {
+  ...project,
+  name: "other",
+  slices: [row("O1", "todo", "QA"), row("O2", "done", "Tech Lead")],
+};
+const across = rowsPerRole([project, second]);
+assert(
+  across[roleSlug("Tech Lead")] === 2 && across[roleSlug("QA")] === 1,
+  "the workspace-wide count is the per-project count summed, not a second parser",
+);
+assert(
+  projectGaps(project, dispatch).rowsPerRole[roleSlug("Tech Lead")] === 1,
+  "and the single-project call still answers for that project alone",
+);
+assert(
+  Object.keys(across).every((k) => k === roleSlug(k)),
+  "keys are slugs, so they join against /roles/activity rows without a second map",
 );
 
 console.log("project-gaps check: OK");

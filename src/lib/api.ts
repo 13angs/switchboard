@@ -243,6 +243,72 @@ export type WorkspaceDispatch =
       source: { tiers: string; roles: string };
     };
 
+/** One station of the delivery belt and the roles that hold its discipline
+ *  (ADR-0041 §SD2 · §SD3). `roles: []` is a real answer, not a missing one:
+ *  `close` is a gate, and the SOP says it will never have a discipline leaf. */
+export interface PipelineStation {
+  stage: string;
+  roles: string[];
+}
+
+/** Where one role signs when a project closes, and how much of the workspace
+ *  already carries that surface (ADR-0041 §SD6). */
+export interface PipelineSignature {
+  role: string;
+  closes: string;
+  /** File-shaped locations named by the row, already counted. */
+  targets: {
+    token: string;
+    /** `project` counts folders under `projects/`; `workspace` counts files. */
+    level: 'project' | 'workspace';
+    have: number;
+    /** The denominator — `null` for a workspace-level file count. */
+    total: number | null;
+  }[];
+  /** Prose left in the cell after its path tokens — carried from the SOP
+   *  verbatim, which is how §7.3's "another file may answer this" reaches the
+   *  screen without being retyped here. */
+  note: string;
+  /** Tokens refused for walking outside the workspace — reported, not dropped. */
+  rejected: string[];
+}
+
+/** Which of the seven signature lines a machine actually holds, read from
+ *  §7.2's own warning paragraph. `unenforced` is computed from `roles`, never
+ *  lifted from the sentence's own count (ADR-0041 §SD6). */
+export interface PipelineEnforcement {
+  declared: boolean;
+  roles: string[];
+  mechanism: string;
+  mechanism_exists: boolean;
+  enforced: number;
+  unenforced: number;
+  total: number;
+}
+
+/** The two belt columns of the role panel. Both halves fail independently:
+ *  a renamed stage column blanks `stations` and leaves `signatures` readable
+ *  (ADR-0041 §SD7). */
+export interface WorkspacePipeline {
+  source: string;
+  stations: {
+    present: boolean;
+    reason: string;
+    stages: PipelineStation[];
+    /** role slug → the stages it holds, `[]` when it holds none. */
+    per_role: Record<string, string[]>;
+  };
+  signatures: {
+    present: boolean;
+    reason: string;
+    rows: PipelineSignature[];
+    /** Every folder under `projects/` — the close gate's denominator, which is
+     *  deliberately wider than the board's own card count (§SD6). */
+    projects: number;
+    enforcement: PipelineEnforcement;
+  };
+}
+
 export interface WorkspaceResponse {
   generated_at: string;
   repo: string;
@@ -258,6 +324,7 @@ export interface WorkspaceResponse {
     | { present: false }
     | { present: true; total: number; closed: number; reduced: number; open: number };
   dispatch: WorkspaceDispatch;
+  pipeline: WorkspacePipeline;
 }
 
 

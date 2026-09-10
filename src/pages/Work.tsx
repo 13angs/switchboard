@@ -67,8 +67,9 @@ export function WorkPage() {
     project: WorkspaceProject;
     gaps: ProjectGaps;
   } | null>(null);
-  // ADR-0039 — the participation panel reads git log, so it is opened by a
-  // press and never on load: nothing about it belongs in the board's own fetch.
+  // ADR-0039 · ADR-0041 — the belt panel reads git log for its fourth column,
+  // so it is opened by a press and never on load: nothing about it belongs in
+  // the board's own fetch.
   const [measuring, setMeasuring] = useState(false);
   // The board shows one project at a time, and which one lives in the URL so a
   // tab can be pinned to it (slices.md S20 §ก–§ข). Read once: nothing else
@@ -143,7 +144,7 @@ export function WorkPage() {
           className="participation"
           onClick={() => setMeasuring(true)}
         >
-          การมีส่วนร่วมต่อ role
+          สายพานต่อ role
         </button>
         <button
           className="refresh"
@@ -240,7 +241,13 @@ export function WorkPage() {
           onClose={() => setFilling(null)}
         />
       )}
-      {measuring && <RoleActivityDialog onClose={() => setMeasuring(false)} />}
+      {/* ADR-0041 §SD1 — the panel joins two payloads and does it here: the
+          belt columns ride /workspace (HEAD), the shipped/open column rides
+          /roles/activity (a window). Handing it the board's own data is what
+          keeps ② from becoming a second parser of slices.md. */}
+      {measuring && data && (
+        <RoleActivityDialog workspace={data} onClose={() => setMeasuring(false)} />
+      )}
       <ToastContainer toasts={toasts} />
     </div>
   );

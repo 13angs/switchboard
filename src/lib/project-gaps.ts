@@ -24,13 +24,44 @@ export interface ProjectGaps {
   presentSlots: string[];
   /** Roles with zero rows in this project's slices.md, in `roles.md` order. */
   rolesWithoutRows: string[];
-  /** Rows per role, for the ones that do have some. */
+  /** Rows per role, keyed by role *slug*, for the ones that do have some. */
   rowsPerRole: Record<string, number>;
   /** `missingSlots + rolesWithoutRows` — the number on the card's button. */
   count: number;
   /** True when `dispatch` could not be read, so the role axis is unavailable.
    *  The slot axis still works; the panel says which half is missing. */
   rolesUnknown: boolean;
+}
+
+/**
+ * Rows per role across any set of projects, keyed by the role slug.
+ *
+ * The one counter behind two screens (ADR-0041 §SD5): the card's own gap badge
+ * passes a single project, the belt panel passes every project on the board.
+ * They must never report two different numbers for the same file, which is the
+ * same reason ADR-0040 kept this arithmetic in the browser to begin with.
+ *
+ * Keyed by slug rather than by the display name a row carries (`Product Owner`)
+ * because the belt panel joins these counts against `/roles/activity`, whose
+ * rows are slugs — the two payloads read the same roles.md table and must line
+ * up on it.
+ */
+export function rowsPerRole(projects: WorkspaceProject[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const project of projects) {
+    for (const slice of project.slices) {
+      if (!slice.role) continue;
+      const key = roleSlug(slice.role);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+/** `Product Owner` → `product-owner`. Mirrors `workspace._slug`, which is what
+ *  puts the third slot of an `Assignment:` id into this shape. */
+export function roleSlug(role: string): string {
+  return role.trim().toLowerCase().replace(/[\s_]+/g, '-');
 }
 
 export function projectGaps(
@@ -46,16 +77,16 @@ export function projectGaps(
     (present ? presentSlots : missingSlots).push(key);
   }
 
-  const rowsPerRole: Record<string, number> = {};
-  for (const slice of project.slices) {
-    if (!slice.role) continue;
-    rowsPerRole[slice.role] = (rowsPerRole[slice.role] ?? 0) + 1;
-  }
+  // Slug-keyed, so this project's half and the workspace-wide belt panel are
+  // literally the same call (§SD5).
+  const perRole = rowsPerRole([project]);
 
   // Narrowed inline rather than through a `rolesUnknown` flag: the flag is a
   // boolean, and TypeScript cannot carry a discriminant through one.
   const rolesWithoutRows = data.dispatch.present
-    ? data.dispatch.roles.map((r) => r.role).filter((role) => !rowsPerRole[role])
+    ? data.dispatch.roles
+        .map((r) => r.role)
+        .filter((role) => !perRole[roleSlug(role)])
     : [];
   const rolesUnknown = !data.dispatch.present;
 
@@ -63,7 +94,7 @@ export function projectGaps(
     missingSlots,
     presentSlots,
     rolesWithoutRows,
-    rowsPerRole,
+    rowsPerRole: perRole,
     count: missingSlots.length + rolesWithoutRows.length,
     rolesUnknown,
   };
