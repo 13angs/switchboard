@@ -29,6 +29,7 @@ const slice: WorkspaceSlice = {
   column: "todo",
   note: "โค้ดตรงกับ ADR",
   role: null,
+  blocked_by: [],
 };
 
 const project: WorkspaceProject = {

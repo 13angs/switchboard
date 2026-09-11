@@ -203,6 +203,12 @@ export interface WorkspaceSlice {
   /** Effective role for this row — its own `role` column cell when the file
    *  has one and it resolves, else the project's `default_role` (ADR-0035). */
   role: string | null;
+  /** Sibling rows (same file) this one is still waiting on — `[]` when the
+   *  file has no `blocked-by` column, the cell is empty, or every id it named
+   *  has since closed (S38, row-status.md § ลำดับก่อนหลัง). Non-empty means
+   *  the dispatch button must stay off regardless of `column`: a row sitting
+   *  in `todo` with an open blocker has not started, it *cannot* start yet. */
+  blocked_by: { id: string; title: string }[];
 }
 
 export interface WorkspaceProject {
