@@ -660,7 +660,12 @@ function ProjectBoard({
                 const long =
                   s.title.length >= READ_MORE_THRESHOLD ||
                   (s.note?.length ?? 0) >= READ_MORE_THRESHOLD;
-                const dispatchable = DISPATCHABLE.has(col.key);
+                const blockers = s.blocked_by ?? [];
+                // S38: a row waiting on a sibling row cannot start yet, no
+                // matter which column its own glyph put it in — the blocker
+                // wins over DISPATCHABLE the same way the owner mark wins
+                // over the status glyph in `_column_for()`.
+                const dispatchable = DISPATCHABLE.has(col.key) && blockers.length === 0;
                 return (
                   <article className={`card c-${col.key}`} key={`${s.id}-${i}`}>
                     <span className="id">
@@ -668,6 +673,11 @@ function ProjectBoard({
                     </span>
                     <span className="title">{s.title}</span>
                     {s.note && <span className="note">{s.note}</span>}
+                    {blockers.length > 0 && (
+                      <span className="blocked-by">
+                        รอ: {blockers.map((b) => `${b.id} ${b.title}`).join(' · ')}
+                      </span>
+                    )}
                     {(long || dispatchable) && (
                       <div className="card-foot">
                         {long && (

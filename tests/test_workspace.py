@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from control_plane import workspace  # noqa: E402
 
-
 SLICES = """---
 title: "demo — งานแบ่งเป็นชิ้น"
 ---
@@ -187,3 +186,73 @@ def test_cache_serves_same_head_and_refreshes_after_commit(tmp_path):
     assert second is not first
     assert second["head"] != first["head"]
     assert second["projects"][0]["has"]["risks"] is True
+
+
+# ── `blocked-by` column (S38, row-status.md § ลำดับก่อนหลัง, W22) ────────────
+
+BLOCKED_SLICES = """---
+title: "demo — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | blocked-by |
+| :-: | --- | --- | :-: | --- | :-: |
+| **B0** | ตัวบล็อกยังเปิดอยู่ | จ. | ⬜ | ยังไม่เริ่ม | |
+| **B1** | รอ B0 | อ. | ⬜ | เริ่มไม่ได้จน B0 ปิด | B0 |
+| **B2** | บล็อกปิดแล้ว | พ. | ✅ | เสร็จแล้ว | |
+| **B3** | รอ B2 ที่ปิดแล้ว | พฤ. | ⬜ | ต้องล้างค่านี้ออก แต่ยังไม่ได้ล้าง | B2 |
+| **B4** | รอสองแถว | ศ. | ⬜ | รอทั้งคู่ | B0, B2 |
+| **B5** | ชี้ไปแถวที่ไม่มีจริง | ส. | ⬜ | id หลอน | B9 |
+| **B6** | ไม่มีตัวบล็อก | อา. | ⬜ | เขียนว่าง | — |
+"""
+
+
+def _repo_blocked(tmp_path: Path) -> Path:
+    return _repo(tmp_path, slices=BLOCKED_SLICES, gaps=None)
+
+
+def test_row_waiting_on_an_open_blocker_names_it(tmp_path):
+    out = workspace.workspace_overview(str(_repo_blocked(tmp_path)), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["B1"]["blocked_by"] == [{"id": "B0", "title": "ตัวบล็อกยังเปิดอยู่"}]
+    # blocked-by is not a 9th status — the row keeps its own glyph's column
+    assert by_id["B1"]["column"] == "todo"
+
+
+def test_a_closed_blocker_no_longer_counts_even_if_the_cell_was_not_cleared(tmp_path):
+    """row-status.md: the column reads *still open*, not *ever named* — a
+    stale id left in the cell after its blocker closed must not hold the row."""
+    out = workspace.workspace_overview(str(_repo_blocked(tmp_path)), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["B3"]["blocked_by"] == []
+
+
+def test_multiple_blockers_report_only_the_still_open_ones(tmp_path):
+    out = workspace.workspace_overview(str(_repo_blocked(tmp_path)), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    # B4 names both B0 (open) and B2 (closed) — only B0 keeps it blocked.
+    assert {b["id"] for b in by_id["B4"]["blocked_by"]} == {"B0"}
+
+
+def test_a_dangling_blocker_id_is_dropped_not_fabricated(tmp_path):
+    """An id the cell names but the file does not contain is a route-lint
+    finding (Check 7), not something this reader invents a blocker for."""
+    out = workspace.workspace_overview(str(_repo_blocked(tmp_path)), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["B5"]["blocked_by"] == []
+
+
+def test_empty_spellings_all_mean_no_blocker(tmp_path):
+    out = workspace.workspace_overview(str(_repo_blocked(tmp_path)), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["B0"]["blocked_by"] == []  # blank cell
+    assert by_id["B6"]["blocked_by"] == []  # "—" cell
+
+
+def test_file_without_a_blocked_by_column_reports_no_blockers(tmp_path):
+    """Backward compatibility — the column is opt-in per file (ADR-0035's rule,
+    applied here): a file that never adopts it must keep working unchanged."""
+    out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
+    slices = out["projects"][0]["slices"]
+    assert slices and all(s["blocked_by"] == [] for s in slices)

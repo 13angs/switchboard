@@ -23,7 +23,7 @@ import os
 import posixpath
 import re
 import subprocess
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -44,6 +44,13 @@ _STATUS_COLUMNS: dict[str, str] = {
 _OWNER_MARK = "🖐️"
 
 COLUMN_ORDER = ("done", "running", "next", "todo", "owner", "off")
+
+# The opt-in `blocked-by` column (row-status.md § ลำดับก่อนหลัง, W22): a row's
+# raw cell value is `#` ids of sibling rows in the *same* file, comma-separated
+# — cross-file blockers stay prose in "ใช้งานได้จริงว่า" by design (that
+# section's item 2). These three spellings all mean "no blocker" — the same
+# convention every other column in these files already uses for "none".
+_BLOCKED_EMPTY = {"", "-", "—"}
 
 # Which files team-os says a project should carry (ADR-0040 §SD2). Read from the
 # workspace, never mirrored here — same discipline as _scan_dispatch. Anchored on
@@ -81,6 +88,14 @@ class Slice:
     # reaches the payload — by the time a card renders, it is never the raw
     # cell text, only the effective role or the project's own default.
     role: str = ""
+    # Sibling rows (same file) this one is still waiting on — `[]` when the
+    # file has no `blocked-by` column, the cell is empty, or every id it named
+    # has since closed (S38: the board must tell "not started" apart from
+    # "cannot start yet", not just repeat the raw cell). Each entry is
+    # `{"id", "title"}` so a card can name the row it is waiting for, not just
+    # print an id. Does **not** change `column` — the 8-glyph status set stays
+    # closed (row-status.md § ลำดับก่อนหลัง item 1).
+    blocked_by: list[dict] = field(default_factory=list)
 
 
 def workspace_overview(
@@ -316,7 +331,9 @@ def _slot_presence(project_dir: Path, slots: list[dict]) -> dict[str, bool]:
     out: dict[str, bool] = {}
     for slot in slots:
         target = project_dir / slot["where"]
-        out[slot["key"]] = target.is_dir() if slot["kind"] == "dir" else target.is_file()
+        out[slot["key"]] = (
+            target.is_dir() if slot["kind"] == "dir" else target.is_file()
+        )
     return out
 
 
@@ -354,25 +371,32 @@ def _parse_slices(path: Path) -> list[Slice]:
     wording that is free to change. A header-name parser would break on a
     rewording that a human would not even notice.
 
-    One column is the exception: an optional trailing `role` column (ADR-0035)
-    is opt-in per file, so it cannot follow a fixed index — some files have 5
-    cells, some 6 (the existing `ADR` column, ADR-0031). It is found instead by
-    scanning the header row for a cell whose text is exactly `role` (English,
-    case-insensitive) — a keyword deliberately left untranslated so it can
-    never collide with the Thai prose headers that stay free to reword.
+    Two columns are the exception: an optional trailing `role` column
+    (ADR-0035) and an optional `blocked-by` column (row-status.md § ลำดับ
+    ก่อนหลัง, W22) are opt-in per file, so neither can follow a fixed index —
+    some files have 5 cells, some 6, some 7. Both are found instead by
+    scanning the header row for a cell whose text is exactly `role` /
+    `blocked-by` (English, case-insensitive) — a keyword deliberately left
+    untranslated so it can never collide with the Thai prose headers that
+    stay free to reword.
+
+    `blocked-by` needs a second pass: its value names sibling ids in the same
+    file, and whether a blocker is still open depends on that sibling's own
+    `column` — which is only known once every row has been walked once.
     """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
 
-    rows: list[Slice] = []
+    raw_rows: list[tuple[str, str, str, str, str, str, str]] = []
     in_table = False
     role_col: Optional[int] = None
+    blocked_col: Optional[int] = None
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
-            if in_table and rows:
+            if in_table and raw_rows:
                 break  # first table only — later tables are other content
             continue
         cells = [c.strip() for c in stripped.strip("|").split("|")]
@@ -382,10 +406,13 @@ def _parse_slices(path: Path) -> list[Slice]:
             in_table = True  # separator row
             continue
         if not in_table:
-            # header row — look for the opt-in `role` column (ADR-0035 §SD1)
+            # header row — look for the opt-in `role` / `blocked-by` columns
             for i, cell in enumerate(cells):
-                if _strip_md(cell).strip().lower() == "role":
+                name = _strip_md(cell).strip().lower()
+                if name == "role":
                     role_col = i
+                elif name == "blocked-by":
+                    blocked_col = i
             continue
 
         ident = _strip_md(cells[0])
@@ -398,7 +425,24 @@ def _parse_slices(path: Path) -> list[Slice]:
             if role_col is not None and role_col < len(cells)
             else ""
         )
+        blocked_raw = (
+            _strip_md(cells[blocked_col])
+            if blocked_col is not None and blocked_col < len(cells)
+            else ""
+        )
 
+        raw_rows.append((ident, title, day, status_cell, note, role, blocked_raw))
+
+    # Second pass: resolve `blocked-by` against this file's own rows, now that
+    # every row's column is knowable.
+    columns_by_id = {
+        ident: _column_for(status_cell, note)
+        for ident, _, _, status_cell, note, _, _ in raw_rows
+    }
+    titles_by_id = {ident: title for ident, title, *_ in raw_rows}
+
+    rows: list[Slice] = []
+    for ident, title, day, status_cell, note, role, blocked_raw in raw_rows:
         rows.append(
             Slice(
                 id=ident,
@@ -407,9 +451,35 @@ def _parse_slices(path: Path) -> list[Slice]:
                 column=_column_for(status_cell, note),
                 note=note,
                 role=role,
+                blocked_by=_open_blockers(blocked_raw, columns_by_id, titles_by_id),
             )
         )
     return rows
+
+
+def _open_blockers(
+    raw: str, columns_by_id: dict[str, str], titles_by_id: dict[str, str]
+) -> list[dict]:
+    """The still-open ids a `blocked-by` cell names, each with its title.
+
+    An id the cell names but this file does not contain is a route-lint
+    concern (Check 7 — a dangling or self/circular reference), not something
+    this reader guesses at: it is silently dropped here rather than surfaced
+    as a fake blocker. Same for a blocker that has since closed (`column ==
+    "done"`) — row-status.md says a closed blocker must be cleared from the
+    cell, and a stale id left behind must not keep holding the row back.
+    """
+    if raw.strip() in _BLOCKED_EMPTY:
+        return []
+    out: list[dict] = []
+    for token in raw.split(","):
+        bid = token.strip()
+        if not bid or bid not in columns_by_id:
+            continue
+        if columns_by_id[bid] == "done":
+            continue
+        out.append({"id": bid, "title": titles_by_id[bid]})
+    return out
 
 
 def _column_for(status_cell: str, note: str) -> str:
@@ -594,9 +664,7 @@ def _parse_role_tiers(path: Path, tiers: dict[str, str]) -> list[dict]:
             if candidate in VALID_EFFORTS:
                 effort = candidate
 
-        out.append(
-            {"role": role, "tier": tier, "model": tiers[tier], "effort": effort}
-        )
+        out.append({"role": role, "tier": tier, "model": tiers[tier], "effort": effort})
     return out
 
 
@@ -847,7 +915,7 @@ def _resolve_surface_target(token: str) -> dict:
     return {
         "token": token,
         "kind": "surface",
-        "slug": token[len(_SURFACE_PREFIX):],
+        "slug": token[len(_SURFACE_PREFIX) :],
     }
 
 
@@ -965,9 +1033,7 @@ def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> N
             for s in p["slices"]:
                 s["role"] = None
         return
-    role_disciplines = _parse_role_disciplines(
-        root / "team-os" / "people" / "roles.md"
-    )
+    role_disciplines = _parse_role_disciplines(root / "team-os" / "people" / "roles.md")
     for p in projects:
         p["default_role"] = _default_role_for_team(
             p.get("team", ""), role_disciplines, dispatch["roles"]
@@ -1282,7 +1348,12 @@ def pipeline_surfaces(root: Path, ownership: Optional[dict] = None) -> dict:
         missing = f"ไม่พบ {source}"
         return {
             "source": source,
-            "stations": {"present": False, "reason": missing, "stages": [], "per_role": {}},
+            "stations": {
+                "present": False,
+                "reason": missing,
+                "stages": [],
+                "per_role": {},
+            },
             "signatures": {
                 "present": False,
                 "reason": missing,

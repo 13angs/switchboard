@@ -26,6 +26,7 @@ const row = (id: string, column: string, role: string | null) => ({
   column,
   note: "",
   role,
+  blocked_by: [],
 });
 
 const project: WorkspaceProject = {
