@@ -166,6 +166,14 @@ export function WorkPage() {
   // `roles.md` since the tab was bookmarked must not leave every transition
   // button silently answering for a seat nobody holds any more.
   const effectiveActingRole = resolveActingRole(dispatchRoles, actingRole);
+  // The office half of the same seat — `commit_message()`
+  // (control_plane/transition.py) writes it as the second segment of
+  // `Assignment:`, and `.githooks/commit-msg` refuses a commit whose office
+  // is `-`. `dispatch.roles[].office` already carries it per role (off
+  // roles.md § แกนความเป็นเจ้าของ, joined by slug in `_scan_dispatch`) — this
+  // just looks it up for whichever seat is picked.
+  const actingOffice =
+    dispatchRoles.find((r) => slugifyRole(r.role) === effectiveActingRole)?.office ?? '';
   // The belt is offered from what the *shown* registers declare, not from the
   // workspace as a whole: picking a project that has no stations must not
   // leave the operator staring at nine empty columns.
@@ -390,6 +398,7 @@ export function WorkPage() {
             data={data}
             grouping={beltAvailable ? activeGrouping : 'status'}
             actingRole={effectiveActingRole}
+            actingOffice={actingOffice}
             onMoved={onMoved}
             onDispatch={(slice) => setPicked({ project: p, slice })}
             onGrill={() => setGrilling(p)}
@@ -732,6 +741,7 @@ function ProjectBoard({
   data,
   grouping,
   actingRole,
+  actingOffice,
   onMoved,
   onDispatch,
   onGrill,
@@ -743,6 +753,10 @@ function ProjectBoard({
   /** S43a — the role picked at the board header. `null` before anyone has
    *  picked one. */
   actingRole: string | null;
+  /** `dispatch.roles[].office` for `actingRole` — travels with it so a
+   *  transition's `Assignment:` never falls back to `-` (§ found on first
+   *  real use, 2026-09-12). */
+  actingOffice: string;
   onMoved: (branch: string, commit: string) => void;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
@@ -860,9 +874,11 @@ function ProjectBoard({
                     {grouping === 'belt' && !s.part_of && s.stage && (
                       <CardTransitions
                         project={project.name}
+                        client={project.client}
                         sliceId={s.id}
                         stage={s.stage}
                         actingRole={actingRole}
+                        actingOffice={actingOffice}
                         onMoved={onMoved}
                       />
                     )}
