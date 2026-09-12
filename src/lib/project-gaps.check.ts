@@ -27,6 +27,10 @@ const row = (id: string, column: string, role: string | null) => ({
   note: "",
   role,
   blocked_by: [],
+  stage: '',
+  part_of: '',
+  criteria: null,
+  axis_conflict: null,
   handoff: null,
 });
 

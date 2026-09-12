@@ -361,3 +361,97 @@ def test_non_git_directory_reports_no_handoffs(tmp_path):
     out = workspace.workspace_overview(str(repo), use_cache=False)
     h1 = [s for s in out["projects"][0]["slices"] if s["id"] == "H1"][0]
     assert h1["handoff"] is None
+
+
+# ── the belt: `stage` and `part-of` (row-status.md § สายพาน) ────────────────
+
+BELT_SLICES = """---
+title: "belt — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage | part-of |
+| :-: | --- | --- | :-: | --- | :-: | :-: |
+| **T0** | การ์ดแม่ที่มีเกณฑ์สองข้อ | จ. | ⬜ | ทำได้จริงว่า… | review | — |
+| **T0a** | เกณฑ์ข้อ 1 | จ. | ✅ | รันแล้ว | — | T0 |
+| **T0b** | เกณฑ์ข้อ 2 | จ. | ⬜ | ยังไม่รัน | — | T0 |
+| **T1** | ค้างไม่ปิด | อ. | ⬜ | สายพานจบแล้วแต่ไม่มีใครปิดแถว | done | — |
+| **T2** | ปิดโดยข้ามด่าน | พ. | ✅ | กา ✅ ทั้งที่ยังอยู่กลางสายพาน | inprogress | — |
+| **T3** | สองแกนตรงกัน | พฤ. | ✅ | ปิดถูกที่ | done | — |
+| **T4** | สถานีที่ไม่มีจริง | ศ. | ⬜ | route-lint Check 9 จะฟ้องใบนี้ | shipping | — |
+| **T5** | ชี้ไปแถวที่ไม่มี | ส. | ⬜ | route-lint Check 10 จะฟ้องใบนี้ | — | T9 |
+| **T6** | ชี้ตัวเอง | อา. | ⬜ | วงความยาว 1 | — | T6 |
+"""
+
+
+def _repo_belt(tmp_path: Path) -> Path:
+    return _repo(tmp_path, slices=BELT_SLICES, gaps=None)
+
+
+def _belt(tmp_path: Path) -> dict:
+    out = workspace.workspace_overview(str(_repo_belt(tmp_path)), use_cache=False)
+    return {s["id"]: s for s in out["projects"][0]["slices"]}
+
+
+def test_stage_is_read_as_a_second_axis_not_a_ninth_glyph(tmp_path):
+    """The row keeps the column its own glyph puts it in — `stage` rides
+    alongside it (row-status.md § สายพาน)."""
+    by_id = _belt(tmp_path)
+    assert by_id["T0"]["stage"] == "review"
+    assert by_id["T0"]["column"] == "todo"  # ⬜ — unchanged by the stage cell
+
+
+def test_a_station_nobody_declared_is_dropped_not_guessed(tmp_path):
+    """An undeclared value is a route-lint Check 9 finding; the reader must not
+    move a card to a station that does not exist because of one typo."""
+    assert _belt(tmp_path)["T4"]["stage"] == ""
+
+
+def test_parent_row_counts_its_criteria_from_the_child_rows(tmp_path):
+    """The checklist is assembled at display time — the file still holds one
+    criterion per row, so `S22` cannot happen again."""
+    by_id = _belt(tmp_path)
+    assert by_id["T0"]["criteria"] == {"done": 1, "total": 2}
+    # the children are cards of their own and carry the pointer, not a count
+    assert by_id["T0a"]["part_of"] == "T0"
+    assert by_id["T0a"]["criteria"] is None
+
+
+def test_a_row_nobody_points_at_has_no_count_rather_than_zero_of_zero(tmp_path):
+    """`None` and `0/0` are different answers: one means "not a parent", the
+    other would claim a parent with no criteria written yet."""
+    assert _belt(tmp_path)["T3"]["criteria"] is None
+
+
+def test_a_dangling_or_self_referential_parent_is_dropped(tmp_path):
+    """Both are route-lint Check 10 findings. The reader keeps the cell as
+    written — it is the file's text — but refuses to count against it."""
+    by_id = _belt(tmp_path)
+    assert "T9" not in by_id  # the row T5 points at does not exist
+    assert by_id["T5"]["part_of"] == "T9"  # the cell survives verbatim
+    assert by_id["T6"]["part_of"] == "T6"
+    # neither produces a parent tally anywhere in the file
+    assert all(s["criteria"] is None for s in (by_id["T5"], by_id["T6"]))
+
+
+def test_the_two_axes_disagreeing_is_reported_not_corrected(tmp_path):
+    by_id = _belt(tmp_path)
+    assert by_id["T1"]["axis_conflict"] == "stuck-open"
+    assert by_id["T2"]["axis_conflict"] == "skipped-gate"
+    assert by_id["T3"]["axis_conflict"] is None
+    # and the rows keep exactly the status they were written with
+    assert by_id["T1"]["column"] == "todo" and by_id["T2"]["column"] == "done"
+
+
+def test_file_without_the_belt_columns_is_unchanged(tmp_path):
+    """Opt-in per file, same contract as `role` and `blocked-by`."""
+    out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
+    slices = out["projects"][0]["slices"]
+    assert slices and all(
+        s["stage"] == ""
+        and s["part_of"] == ""
+        and s["criteria"] is None
+        and s["axis_conflict"] is None
+        for s in slices
+    )
