@@ -26,10 +26,16 @@ import {
   withProjectParam,
   resolveProjectSelection,
 } from '../lib/project-filter';
+import {
+  readActingRoleParam,
+  withActingRoleParam,
+  resolveActingRole,
+} from '../lib/acting-role';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import { RoleActivityDialog } from './RoleActivity';
 import { RoleRegister } from './RoleRegister';
+import { CardTransitions } from './CardTransitions';
 import {
   columnOf,
   columnsFor,
@@ -122,6 +128,12 @@ export function WorkPage() {
   const [project, setProject] = useState<string | null>(() =>
     readProjectParam(window.location.search),
   );
+  // Which role the operator is sitting as right now (slices.md S43a) — read
+  // from `?actingRole=` the same way `project` reads `?project=`, and for the
+  // same reason: each tab of a multi-tab board can stand on its own seat.
+  const [actingRole, setActingRole] = useState<string | null>(() =>
+    readActingRoleParam(window.location.search),
+  );
   // ADR-0038 §SD1 — a "stay" dispatch closes its dialog and toasts here
   // instead of navigating away.
   const { toasts, toast } = useToast();
@@ -137,7 +149,22 @@ export function WorkPage() {
     );
   }, []);
 
+  const pickActingRole = useCallback((role: string | null) => {
+    setActingRole(role);
+    const { pathname, search, hash } = window.location;
+    window.history.replaceState(
+      null,
+      '',
+      `${pathname}${withActingRoleParam(search, role)}${hash}`,
+    );
+  }, []);
+
   const selection = resolveProjectSelection(data?.projects ?? [], project);
+  const dispatchRoles = data?.dispatch.present ? data.dispatch.roles : [];
+  // Resolved against the live table every render: a role dropped from
+  // `roles.md` since the tab was bookmarked must not leave every transition
+  // button silently answering for a seat nobody holds any more.
+  const effectiveActingRole = resolveActingRole(dispatchRoles, actingRole);
   // The belt is offered from what the *shown* registers declare, not from the
   // workspace as a whole: picking a project that has no stations must not
   // leave the operator staring at nine empty columns.
@@ -164,6 +191,19 @@ export function WorkPage() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [load]);
+
+  // S43b/§SD6 — the write lands on the card's own branch, not on `main`, so
+  // reloading `/workspace` will not show the new `stage` until that branch is
+  // merged (the same one-PR lag the board already prints for every other
+  // write path). The toast is the confirmation; the board catching up is a
+  // separate, already-known lag, not a bug this slice owns.
+  const onMoved = useCallback(
+    (branch: string, commit: string) => {
+      toast(`ส่งต่อแล้ว · ${branch} ${commit}`);
+      load();
+    },
+    [toast, load],
+  );
 
   return (
     <div className="work">
@@ -222,6 +262,26 @@ export function WorkPage() {
               </button>
             ))}
           </div>
+        )}
+        {/* S43a — who is at the keyboard, separate from any row's own
+            `role` cell (row-status.md § ตารางการส่งต่อ 🔑). Only offered
+            where there is a belt to send a card along; the acting role has
+            nothing to do on the status grouping. */}
+        {view === 'board' && data && beltAvailable && (
+          <label className="acting-role">
+            สวมบทบาท
+            <select
+              value={effectiveActingRole ?? ''}
+              onChange={(e) => pickActingRole(e.target.value || null)}
+            >
+              <option value="">— ยังไม่เลือก —</option>
+              {dispatchRoles.map((r) => (
+                <option key={r.role} value={r.role}>
+                  {r.role}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
         {data && (
           <span className="provenance" title={data.stale_by}>
@@ -323,6 +383,8 @@ export function WorkPage() {
             project={p}
             data={data}
             grouping={beltAvailable ? activeGrouping : 'status'}
+            actingRole={effectiveActingRole}
+            onMoved={onMoved}
             onDispatch={(slice) => setPicked({ project: p, slice })}
             onGrill={() => setGrilling(p)}
             onGaps={() => setGapsFor(p)}
@@ -663,6 +725,8 @@ function ProjectBoard({
   project,
   data,
   grouping,
+  actingRole,
+  onMoved,
   onDispatch,
   onGrill,
   onGaps,
@@ -670,6 +734,10 @@ function ProjectBoard({
   project: WorkspaceProject;
   data: WorkspaceResponse;
   grouping: Grouping;
+  /** S43a — the role picked at the board header. `null` before anyone has
+   *  picked one. */
+  actingRole: string | null;
+  onMoved: (branch: string, commit: string) => void;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
   onGaps: () => void;
@@ -778,6 +846,20 @@ function ProjectBoard({
                         board reads files, it does not edit them
                         (meta/adr-slices-stage-axis-2026-09.md §SD3). */}
                     {conflict && <span className="axis-conflict">⚠ {conflict}</span>}
+                    {/* S43a–S43c — a card's own row (not a `part-of`
+                        criterion, which carries no stage of its own) on the
+                        belt grouping offers whatever `evaluate()` says out of
+                        its current station, for whichever role is sworn in
+                        at the header. */}
+                    {grouping === 'belt' && !s.part_of && s.stage && (
+                      <CardTransitions
+                        project={project.name}
+                        sliceId={s.id}
+                        stage={s.stage}
+                        actingRole={actingRole}
+                        onMoved={onMoved}
+                      />
+                    )}
                     {(long || dispatchable) && (
                       <div className="card-foot">
                         {long && (

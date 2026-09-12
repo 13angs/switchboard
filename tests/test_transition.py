@@ -254,7 +254,9 @@ def test_a_move_the_code_cannot_check_is_reported_and_refused(tmp_path):
         "| `done` | `deployed` | `cto` | — |\n| `done` | `inprogress` |",
     )
     root = _root(tmp_path, table=extra)
-    assert any("ตารางประกาศไว้ แต่โค้ดไม่มีตัวตรวจ" in d for d in transition.drift(root))
+    assert any(
+        "ตารางประกาศไว้ แต่โค้ดไม่มีตัวตรวจ" in d for d in transition.drift(root)
+    )
     out = transition.evaluate(
         root, row=_row(stage="done"), to_stage="deployed", actor_role="cto"
     )
@@ -262,10 +264,97 @@ def test_a_move_the_code_cannot_check_is_reported_and_refused(tmp_path):
 
 
 def test_a_check_the_table_no_longer_declares_is_reported(tmp_path):
-    fewer = TABLE.replace("| `done` | `inprogress` | `product-owner` | ต้องมีเหตุผล |\n", "")
-    assert any(
-        "ตารางไม่ประกาศแล้ว" in d for d in transition.drift(_root(tmp_path, table=fewer))
+    fewer = TABLE.replace(
+        "| `done` | `inprogress` | `product-owner` | ต้องมีเหตุผล |\n", ""
     )
+    assert any(
+        "ตารางไม่ประกาศแล้ว" in d
+        for d in transition.drift(_root(tmp_path, table=fewer))
+    )
+
+
+# ── the button list a screen renders from (S43b) ────────────────────────────
+
+
+def test_candidates_lists_every_declared_move_out_of_the_current_stage(tmp_path):
+    out = transition.candidates(
+        _root(tmp_path), row=_row(stage="readyqa"), actor_role="qa"
+    )
+    assert [c["to_stage"] for c in out] == ["inprogress", "readydeploy"]
+
+
+def test_candidates_orders_by_belt_station_not_table_line_order(tmp_path):
+    """`readyqa → inprogress` sits *after* `readyqa → readydeploy` in TABLE —
+    the belt puts `inprogress` first, and the list must follow the belt."""
+    out = transition.candidates(
+        _root(tmp_path),
+        row=_row(stage="readyqa", criteria={"done": 1, "total": 1}),
+        actor_role="qa",
+    )
+    assert out[0]["to_stage"] == "inprogress"
+    assert out[1]["to_stage"] == "readydeploy"
+
+
+def test_candidates_is_empty_off_a_stage_with_no_declared_move(tmp_path):
+    """`backlog`/`techdesign` have no row in the table (ADR-0044 §SD4) — the
+    card skips itself, so there is nothing for a button to offer."""
+    out = transition.candidates(
+        _root(tmp_path), row=_row(stage="backlog"), actor_role="cto"
+    )
+    assert out == []
+
+
+def test_candidates_fails_dark_the_same_way_evaluate_does(tmp_path):
+    out = transition.candidates(
+        _root(tmp_path, table=None), row=_row(stage="readydev"), actor_role="developer"
+    )
+    assert out == []
+
+
+def test_candidates_reports_the_wrong_role_as_not_allowed(tmp_path):
+    out = transition.candidates(
+        _root(tmp_path), row=_row(stage="readydev"), actor_role="qa"
+    )
+    assert len(out) == 1 and out[0]["allowed"] is False
+    assert "developer" in out[0]["reason"]
+
+
+def test_candidates_probes_a_form_gated_move_as_allowed(tmp_path):
+    """`review → readyqa` needs `env`/`risk` — fields that only exist once a
+    dialog is open to type them. The list answers "would this role clear the
+    gate", not "is the form filled", so it must not read this move as refused
+    just because nobody has typed anything yet."""
+    out = transition.candidates(
+        _root(tmp_path), row=_row(stage="review"), actor_role="senior-developer"
+    )
+    assert out == [
+        {
+            "to_stage": "readyqa",
+            "allowed": True,
+            "reason": None,
+            "roles": ["senior-developer"],
+            "requires": "ฟอร์มส่งงานครบ",
+        }
+    ]
+
+
+def test_candidates_still_refuses_an_open_blocker_despite_the_form_probe(tmp_path):
+    """The probe fills form fields; it must never paper over a row fact like
+    an open blocker or an unmet criterion — those still fail for real."""
+    out = transition.candidates(
+        _root(tmp_path),
+        row=_row(stage="readydev", blocked_by=[{"id": "T0", "title": "x"}]),
+        actor_role="developer",
+    )
+    assert out == [
+        {
+            "to_stage": "inprogress",
+            "allowed": False,
+            "reason": "ยังมีตัวบล็อกที่ไม่ปิด: T0",
+            "roles": ["developer", "senior-developer"],
+            "requires": "blocked-by ต้องว่าง",
+        }
+    ]
 
 
 # ── the write path, against a real git repo ─────────────────────────────────
@@ -321,7 +410,9 @@ def test_a_refused_transition_writes_nothing(repo):
         repo, project="demo", row=_row(), to_stage="inprogress", actor_role="qa"
     )
     assert out["ok"] is False
-    assert (repo / "projects" / "demo" / "slices.md").read_text(encoding="utf-8") == before
+    assert (repo / "projects" / "demo" / "slices.md").read_text(
+        encoding="utf-8"
+    ) == before
     assert not (repo / ".claude" / "worktrees").exists()
 
 
@@ -406,7 +497,11 @@ def test_a_second_transition_reuses_the_same_worktree_and_branch(repo):
 
 def test_a_row_the_register_does_not_have_writes_nothing(repo):
     out = transition.apply(
-        repo, project="demo", row=_row(id="T9"), to_stage="inprogress", actor_role="developer"
+        repo,
+        project="demo",
+        row=_row(id="T9"),
+        to_stage="inprogress",
+        actor_role="developer",
     )
     assert out["ok"] is False and "T9" in out["reason"]
 

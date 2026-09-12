@@ -1019,6 +1019,8 @@ def make_handler(repo_root: str):
                 self._calendar(repo_root)
             elif path == "/roles/activity":
                 self._role_activity(repo_root)
+            elif path == "/work/transitions":
+                self._work_transitions(repo_root)
             elif path == "/health":
                 self._json(200, {"ok": True})
             elif path == "/state":
@@ -1249,9 +1251,7 @@ def make_handler(repo_root: str):
             # rather than an empty panel that reads like "shipped nothing".
             project = (qs.get("project") or [""])[0].strip() or None
             try:
-                self._json(
-                    200, role_activity.role_activity(repo_root, days, project)
-                )
+                self._json(200, role_activity.role_activity(repo_root, days, project))
             except ValueError as e:
                 self._json(400, {"error": str(e)})
             except Exception as e:
@@ -1356,6 +1356,59 @@ def make_handler(repo_root: str):
                     "path": raw,
                     "content": text,
                     "size": len(text),
+                },
+            )
+
+        def _work_transitions(self, repo_root: str):
+            """GET /work/transitions — every move out of one row's current
+            stage, evaluated for one acting role (ADR-0044 §SD5 · slices.md
+            S43a · S43b).
+
+            A read-only preview of the same `transition.evaluate()` the POST
+            handler below calls to actually move the card — so a button on
+            the board is a picture of this answer, never a second copy of the
+            rule. `?role=` is the operator's *acting* role from the header
+            picker (S43a), not the row's own `role` cell: those answer
+            different questions (row-status.md § ตารางการส่งต่อ 🔑).
+            """
+            qs = parse_qs(urlparse(self.path).query)
+            project = (qs.get("project") or [""])[0].strip()
+            slice_id = (qs.get("slice_id") or [""])[0].strip()
+            actor = (qs.get("role") or [""])[0].strip()
+            if not all((project, slice_id, actor)):
+                self._json(
+                    400, {"error": "ต้องมี project · slice_id · role ครบทุกช่อง"}
+                )
+                return
+
+            root = Path(repo_root)
+            overview = workspace.workspace_overview(repo_root, use_cache=True)
+            found = next(
+                (
+                    s
+                    for p in overview["projects"]
+                    if p["name"] == project
+                    for s in p["slices"]
+                    if s["id"] == slice_id
+                ),
+                None,
+            )
+            if found is None:
+                self._json(404, {"error": f"ไม่พบแถว {slice_id} ใน {project}"})
+                return
+
+            table = transition.transitions(root)
+            if not table["present"]:
+                self._json(
+                    200, {"present": False, "reason": table["reason"], "moves": []}
+                )
+                return
+            self._json(
+                200,
+                {
+                    "present": True,
+                    "reason": "",
+                    "moves": transition.candidates(root, row=found, actor_role=actor),
                 },
             )
 
@@ -1512,9 +1565,10 @@ def make_handler(repo_root: str):
                         },
                     )
                     return
-                if requested_model and workspace.model_tier(
-                    repo_root, requested_model
-                ) == "light":
+                if (
+                    requested_model
+                    and workspace.model_tier(repo_root, requested_model) == "light"
+                ):
                     # ADR-0032 §SD6: the light-tier model (Haiku) rejects
                     # `--effort` outright — it still uses `budget_tokens`.
                     self._json(
