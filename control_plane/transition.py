@@ -6,9 +6,11 @@ answer. The rules themselves are **not held here** — they are read from
 `team-os/ways-of-working/row-status.md § ตารางการส่งต่อ`, the file that owns
 them, the same discipline `_scan_dispatch` takes with roles.md (ADR-0029 §SD4).
 
-What this module does NOT do, deliberately: it does not write, commit, merge, or
-notify. It answers *may this transition happen, and if not why*. The write path
-is a separate slice so that the decision can be reviewed on its own.
+The gate itself (`evaluate`/`candidates`) decides and writes nothing. Below it,
+in its own clearly marked section, sits the write path ADR-0044 §SD1 settled —
+write in the card's own worktree, commit, push, make sure the card's PR is open
+(ADR-0048) — and the webhook of ADR-0046 §SD3. What this module still does NOT
+do is **merge**: that is one press, at one station, and it is `S44`'s row.
 
 Stdlib only (tests/test_stdlib_purity.py enforces it).
 """
@@ -290,9 +292,9 @@ import urllib.request
 _WORKTREE_DIR = (".claude", "worktrees")
 
 
-def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+def _git(cwd: Path, *args: str, timeout_s: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout_s
     )
 
 
@@ -348,6 +350,172 @@ def _worktree(root: Path, slug: str, branch: str) -> tuple[Optional[Path], str]:
     if made.returncode != 0:
         return None, f"เปิด worktree ไม่ได้: {made.stderr.strip()[:200]}"
     return path, ""
+
+
+# ── the publish leg (ADR-0048) ──────────────────────────────────────────────
+#
+# ADR-0044 §SD5 wrote the endpoint's sequence as "write · commit · (if it is the
+# last station) merge · notify". Between commit and merge sat two verbs that
+# never had a row of their own: PUSH and OPEN THE PR. Without them every press
+# left its commit on a local branch and nothing carried it anywhere — measured
+# 2026-09-12 on two live branches (`switchboard-s30`, `switchboard-s43`) whose
+# commits said a card had moved while `main`'s register still said it had not.
+#
+# The credential is the one the server process already inherited from the
+# owner's env: `control_plane/gh.py` has been running `gh pr list` with it since
+# v2, so this is read→write on GitHub, not a board that suddenly holds a token.
+# What it may do with it is two verbs and no more (ADR-0048 §SD3) — the refspec
+# is built from the branch `apply()` computed, never from the request, and a
+# branch that is not a task branch is refused before `git` is spawned.
+
+# Task branches only. `apply()` builds the name itself, so this can only fire if
+# someone changes that construction — which is exactly when a guard is worth
+# having, because the value it guards against writing is `main`.
+_BRANCH_PREFIX = "worktree-"
+_BASE_BRANCH = "main"
+
+
+def _gh(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    """`gh` with the server's own environment — that is where the credential
+    comes from (ADR-0048 §SD1) and it is never read, copied or logged here.
+
+    `GH_PROMPT_DISABLED` because nobody is at this terminal: a `gh` that decides
+    to ask a question must fail and say so, not sit on the request until the
+    timeout. The token itself is not touched: it stays in the inherited env.
+    """
+    return subprocess.run(
+        ["gh", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+    )
+
+
+def _open_pr(tree: Path, branch: str) -> Optional[dict]:
+    """The open PR whose head is `branch`, or None. Never raises."""
+    try:
+        out = _gh(
+            tree,
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--limit",
+            "1",
+            "--json",
+            "number,url",
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        rows = json.loads(out.stdout) if out.stdout.strip() else []
+    except json.JSONDecodeError:
+        return None
+    return rows[0] if rows else None
+
+
+def publish(tree: Path, branch: str, *, title: str, body: str) -> dict:
+    """Push the card's branch and make sure its PR is open (ADR-0048 §SD2).
+
+    The verb is *ensure*, not *create*: one card is one PR (ADR-0044 §SD1), so a
+    second press appends to the same branch and finds the same PR rather than
+    opening a second one. Calling this twice is a no-op the second time, which
+    is what makes a failed push retryable by simply pressing again (§SD4).
+
+    Returns `{pushed, pr, url, reason}`. Never raises and never rolls anything
+    back: the commit already happened and carries the form's own words, so a
+    network failure is reported, not undone.
+    """
+    blank = {"pushed": False, "pr": 0, "url": "", "reason": ""}
+    if not branch.startswith(_BRANCH_PREFIX):
+        return {**blank, "reason": f"ไม่ใช่ branch ของการ์ด: {branch}"}
+    if _git(tree, "remote", "get-url", "origin").returncode != 0:
+        # A workspace clone with no remote is a legitimate state (the test
+        # fixtures are exactly that). Nothing to push to is not a failure of
+        # the press.
+        return {**blank, "reason": "ไม่มี remote origin"}
+
+    try:
+        # Explicit refspec, both sides built from the branch this module chose.
+        # No `--force`: the board only ever appends commits to this branch, so
+        # a rejected non-fast-forward means someone else wrote it and a human
+        # should look — not that the board should overwrite them.
+        pushed = _git(
+            tree, "push", "origin", f"{branch}:refs/heads/{branch}", timeout_s=180
+        )
+    except subprocess.TimeoutExpired:
+        return {**blank, "reason": "push ไม่จบภายในเวลาที่ให้"}
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {**blank, "reason": f"push ไม่ขึ้น: {str(exc)[:200]}"}
+    if pushed.returncode != 0:
+        return {**blank, "reason": "push ไม่ขึ้น: " + pushed.stderr.strip()[:200]}
+
+    existing = _open_pr(tree, branch)
+    if existing:
+        return {
+            "pushed": True,
+            "pr": existing.get("number", 0),
+            "url": existing.get("url", ""),
+            "reason": "",
+        }
+
+    try:
+        made = _gh(
+            tree,
+            "pr",
+            "create",
+            "--base",
+            _BASE_BRANCH,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {**blank, "pushed": True, "reason": f"เปิด PR ไม่ได้: {str(exc)[:200]}"}
+    if made.returncode != 0:
+        return {
+            **blank,
+            "pushed": True,
+            "reason": "เปิด PR ไม่ได้: " + made.stderr.strip()[:200],
+        }
+    url = made.stdout.strip().splitlines()[-1].strip() if made.stdout.strip() else ""
+    number = 0
+    tail = url.rsplit("/", 1)[-1]
+    if tail.isdigit():
+        number = int(tail)
+    return {"pushed": True, "pr": number, "url": url, "reason": ""}
+
+
+def pr_body(*, project: str, row: dict, branch: str) -> str:
+    """The body of the PR the board opens for one card.
+
+    Says what opened it and points back at the register row, because the next
+    reader of this PR is a person deciding whether to merge it and the one
+    thing they need is which card this is. No harness attribution line: no
+    harness wrote it (ADR-0048 § Consequences).
+    """
+    return "\n".join(
+        [
+            f"การ์ด **{row['id']}** ของ `projects/{project}/slices.md`",
+            "",
+            "ใบนี้ถูกเปิดโดยบอร์ด `/work` ตอนกดส่งต่อ — หนึ่งการ์ดหนึ่งใบ",
+            "(`ADR-0044 §SD1` · `ADR-0048 §SD2`) ⇒ การกดครั้งต่อไปของการ์ดใบนี้",
+            f"ต่อ commit ลง `{branch}` แล้วโตอยู่ในใบนี้ ไม่เปิดใบใหม่",
+            "",
+            "ก่อน merge: อ่านเช็กของใบ · สแกน diff เทียบ stop-list ·",
+            "และถ้าใบนี้มี `Assignment:` มากกว่าหนึ่ง id ให้ merge ด้วย **merge commit**",
+            "ไม่ใช่ squash (`ADR-0048 §SD2`)",
+        ]
+    )
 
 
 def apply(
@@ -433,17 +601,35 @@ def apply(
         _git(tree, "reset", "--hard", "HEAD")
         return {"ok": False, "reason": done.stderr.strip()[:300], **_blank()}
     head = _git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
+    # Carry it out of the machine (ADR-0048 §SD1). A failure here is reported,
+    # never rolled back: the commit above is real and holds the words the
+    # operator typed into the handoff form, and the next press pushes it — the
+    # ensure is idempotent (§SD4).
+    published = publish(
+        tree,
+        branch,
+        title=message.split("\n", 1)[0],
+        body=pr_body(project=project, row=row, branch=branch),
+    )
     return {
         "ok": True,
         "reason": None,
         "branch": branch,
         "commit": head,
         "worktree": str(tree),
+        "published": published,
     }
 
 
 def _blank() -> dict:
-    return {"branch": "", "commit": "", "worktree": ""}
+    return {
+        "branch": "",
+        "commit": "",
+        "worktree": "",
+        # Same keys in every answer: a caller that reads `published` off a
+        # refused press gets "nothing was published", not a KeyError.
+        "published": {"pushed": False, "pr": 0, "url": "", "reason": ""},
+    }
 
 
 def commit_message(

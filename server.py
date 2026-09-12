@@ -1419,6 +1419,12 @@ def make_handler(repo_root: str):
             board is a picture of this handler's answer; a request that skips
             the UI meets the same answer, which is the whole point of there
             being one gate.
+
+            A press that passes writes, commits, pushes and makes sure the
+            card's PR is open (ADR-0048) — `result["published"]` says whether
+            it got out of the machine and, when it did not, why. That is a
+            report, not a failure: the row moved and the commit stands either
+            way (ADR-0048 §SD4).
             """
             body, error = _read_json_body(self)
             if error:

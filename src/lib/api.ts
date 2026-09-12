@@ -641,12 +641,24 @@ export interface HandoffForm {
   release?: string;
 }
 
+/** Where the press ended up outside this machine (ADR-0048). `pushed: false`
+ *  with a `reason` is a report, not a failed press: the row moved and the
+ *  commit stands — it just has not left the branch yet, and the next press
+ *  carries it (§SD4). */
+export interface TransitionPublished {
+  pushed: boolean;
+  pr: number;
+  url: string;
+  reason: string;
+}
+
 export interface TransitionResult {
   ok: boolean;
   reason: string | null;
   branch: string;
   commit: string;
   worktree: string;
+  published?: TransitionPublished;
   notified?: { sent: boolean; reason: string; status?: number };
 }
 
