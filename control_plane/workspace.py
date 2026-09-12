@@ -43,6 +43,11 @@ _STATUS_COLUMNS: dict[str, str] = {
 # it is not "todo" in any actionable sense and gets its own column.
 _OWNER_MARK = "🖐️"
 
+# The two glyphs that close a row (row-status.md § ชุดสถานะปิด: ✅ เสร็จ · ❌
+# ยกเลิก). A closed row is not waiting on anyone, so the owner mark inside its
+# prose is description, not a queue position — S42.
+_CLOSED_GLYPHS = ("✅", "❌")
+
 COLUMN_ORDER = ("done", "running", "next", "todo", "owner", "off")
 
 # The opt-in `blocked-by` column (row-status.md § ลำดับก่อนหลัง, W22): a row's
@@ -683,9 +688,23 @@ def _column_for(status_cell: str, note: str) -> str:
     """Which board column a row belongs in.
 
     The owner mark wins over the status glyph: a piece the owner must decide is
-    not actionable work regardless of how its status reads.
+    not actionable work regardless of how its status reads — **while the row is
+    still open**.
+
+    S42 narrows that to open rows. `🖐️` is a status mark in the `สถานะ` cell,
+    but in the prose cell it is ordinary text: a closed row that happens to
+    *describe* an owner decision ("needs the owner's green light per PR") was
+    being filed under `owner`, and once `stage` arrived that row also reported a
+    false `stuck-open` conflict. Found on `S35` of the board's own register, the
+    first real finding the second axis produced.
+
+    A closed row keeps whatever column its own glyph puts it in — including
+    `❌`, which this function has always sent to `todo` for want of an entry in
+    `_STATUS_COLUMNS`. That is a separate question and is deliberately left
+    exactly as it was.
     """
-    if _OWNER_MARK in status_cell or _OWNER_MARK in note:
+    closed = any(g in status_cell for g in _CLOSED_GLYPHS)
+    if not closed and (_OWNER_MARK in status_cell or _OWNER_MARK in note):
         return "owner"
     for glyph, column in _STATUS_COLUMNS.items():
         if glyph in status_cell:
