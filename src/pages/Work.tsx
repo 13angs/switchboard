@@ -30,16 +30,25 @@ import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
 import { RoleActivityDialog } from './RoleActivity';
 import { RoleRegister } from './RoleRegister';
+import {
+  columnOf,
+  columnsFor,
+  conflictLabel,
+  defaultGrouping,
+  type Grouping,
+} from '../lib/belt';
 import { useToast, ToastContainer } from '../components/shared/Toast';
 import './Work.css';
 
-/** Board columns, in reading order. Mirrors control_plane/workspace.py COLUMN_ORDER. */
-const COLUMNS = [
-  { key: 'done', label: 'เสร็จแล้ว' },
-  { key: 'running', label: 'กำลังทำ' },
-  { key: 'next', label: 'ถัดไป' },
-  { key: 'todo', label: 'รอคิว' },
-  { key: 'owner', label: 'คนเคาะ' },
+/** The two groupings of the board screen (row-status.md § สายพาน).
+ *
+ *  Not a third screen — ADR-0043 §SD1 capped `/work` at two, and this is the
+ *  same rows read along the other axis: `สถานะ` answers *is this row open*,
+ *  `stage` answers *where is it on the belt*. Column lists live in
+ *  `src/lib/belt.ts` so the choice is checkable offline. */
+const GROUPINGS = [
+  { key: 'belt', label: 'สายพาน' },
+  { key: 'status', label: 'สถานะแถว' },
 ] as const;
 
 /** `off` is not a column: days with no work are context, not a queue. */
@@ -99,6 +108,12 @@ export function WorkPage() {
   // so it is opened by a press and never on load: nothing about it belongs in
   // the board's own fetch.
   const [measuring, setMeasuring] = useState(false);
+  // `null` until the payload arrives: the grouping a project opens in is a
+  // fact of the file (does it declare stations at all), not a preference, so
+  // it cannot be decided before the file is read. Once the operator picks, the
+  // pick wins for the rest of the visit and is deliberately not stored — same
+  // reasoning ADR-0043 §SD1 gave for the screen itself.
+  const [grouping, setGrouping] = useState<Grouping | null>(null);
   // ADR-0043 §SD1 — always `board`, never restored from anywhere.
   const [view, setView] = useState<View>('board');
   // The board shows one project at a time, and which one lives in the URL so a
@@ -123,6 +138,12 @@ export function WorkPage() {
   }, []);
 
   const selection = resolveProjectSelection(data?.projects ?? [], project);
+  // The belt is offered from what the *shown* registers declare, not from the
+  // workspace as a whole: picking a project that has no stations must not
+  // leave the operator staring at nine empty columns.
+  const beltAvailable = defaultGrouping(selection.shown) === 'belt';
+  const activeGrouping: Grouping =
+    grouping ?? (beltAvailable ? 'belt' : 'status');
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -180,6 +201,28 @@ export function WorkPage() {
             </button>
           ))}
         </div>
+        {/* The second axis, on the same screen (row-status.md § สายพาน).
+            Only offered where the board has a belt to read: a register with no
+            station declared would answer with nine empty columns. */}
+        {view === 'board' && data && beltAvailable && (
+          <div
+            className="work-views"
+            role="tablist"
+            aria-label="แกนที่บอร์ดจัดกลุ่มด้วย"
+          >
+            {GROUPINGS.map((g) => (
+              <button
+                key={g.key}
+                role="tab"
+                aria-selected={activeGrouping === g.key}
+                className={`work-view${activeGrouping === g.key ? ' on' : ''}`}
+                onClick={() => setGrouping(g.key)}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        )}
         {data && (
           <span className="provenance" title={data.stale_by}>
             HEAD <code>{data.head ? data.head.slice(0, 7) : 'ไม่ใช่ git'}</code>
@@ -279,6 +322,7 @@ export function WorkPage() {
             key={p.name}
             project={p}
             data={data}
+            grouping={beltAvailable ? activeGrouping : 'status'}
             onDispatch={(slice) => setPicked({ project: p, slice })}
             onGrill={() => setGrilling(p)}
             onGaps={() => setGapsFor(p)}
@@ -618,12 +662,14 @@ const READ_MORE_THRESHOLD = 100;
 function ProjectBoard({
   project,
   data,
+  grouping,
   onDispatch,
   onGrill,
   onGaps,
 }: {
   project: WorkspaceProject;
   data: WorkspaceResponse;
+  grouping: Grouping;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
   onGaps: () => void;
@@ -664,9 +710,14 @@ function ProjectBoard({
         )}
       </div>
       <div className="cols">
-        {COLUMNS.map((col) => {
-          const items = project.slices.filter((s) => s.column === col.key);
-          const shape = promptShapeFor(col.key);
+        {columnsFor(grouping).map((col) => {
+          // `off` is context, not a queue — hidden in either grouping, and it
+          // has no belt station to fall into either.
+          const items = project.slices.filter(
+            (s) =>
+              s.column !== HIDDEN_COLUMN &&
+              columnOf(s, grouping, project.slices) === col.key,
+          );
           return (
             <div className="col" key={col.key}>
               <div className={`col-head c-${col.key}`}>
@@ -683,9 +734,15 @@ function ProjectBoard({
                 // matter which column its own glyph put it in — the blocker
                 // wins over DISPATCHABLE the same way the owner mark wins
                 // over the status glyph in `_column_for()`.
-                const dispatchable = DISPATCHABLE.has(col.key) && blockers.length === 0;
+                // Both read `s.column`, never the column the card is sitting
+                // in: whether a session can be opened is a fact of the row's
+                // own status, and in the belt grouping `col.key` is a station.
+                const shape = promptShapeFor(s.column);
+                const dispatchable =
+                  DISPATCHABLE.has(s.column) && blockers.length === 0;
+                const conflict = conflictLabel(s);
                 return (
-                  <article className={`card c-${col.key}`} key={`${s.id}-${i}`}>
+                  <article className={`card c-${s.column}`} key={`${s.id}-${i}`}>
                     <span className="id">
                       {s.id !== '—' ? s.id : ''} {s.day && <em>· {s.day}</em>}
                     </span>
@@ -706,9 +763,21 @@ function ProjectBoard({
                         being worked, and an `owner` row waits on a person, not
                         on a sibling row. */}
                     {blockers.length === 0 &&
-                      (col.key === 'todo' || col.key === 'next') && (
+                      (s.column === 'todo' || s.column === 'next') && (
                         <span className="ready-now">⚡ พร้อมหยิบ</span>
                       )}
+                    {/* Assembled at display time from the rows that name this
+                        one as their parent — the file still holds one criterion
+                        per row (row-status.md § สายพาน). */}
+                    {s.criteria && (
+                      <span className="criteria">
+                        เกณฑ์ {s.criteria.done}/{s.criteria.total}
+                      </span>
+                    )}
+                    {/* The two axes disagreeing. Printed, never corrected: the
+                        board reads files, it does not edit them
+                        (meta/adr-slices-stage-axis-2026-09.md §SD3). */}
+                    {conflict && <span className="axis-conflict">⚠ {conflict}</span>}
                     {(long || dispatchable) && (
                       <div className="card-foot">
                         {long && (

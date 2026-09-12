@@ -467,6 +467,31 @@
 }
 /* The inverse of .blocked-by, and deliberately quieter than it: "you cannot
    start" has to interrupt, "you can start" only has to be visible. */
+.card .criteria {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  white-space: nowrap;
+}
+/* Louder than both other badges on purpose: "these two axes disagree" is the
+   one thing on a card that nobody meant to be true. */
+.card .axis-conflict {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border: 1px solid var(--blocked);
+  border-radius: 999px;
+  color: var(--blocked);
+  background: var(--blocked-soft);
+  white-space: nowrap;
+}
 .card .ready-now {
   align-self: flex-start;
   font-family: var(--mono);
