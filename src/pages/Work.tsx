@@ -30,6 +30,7 @@ import {
   readActingRoleParam,
   withActingRoleParam,
   resolveActingRole,
+  slugifyRole,
 } from '../lib/acting-role';
 import { DispatchDialog } from './DispatchDialog';
 import { DayCalendar } from './DayCalendar';
@@ -276,7 +277,12 @@ export function WorkPage() {
             >
               <option value="">— ยังไม่เลือก —</option>
               {dispatchRoles.map((r) => (
-                <option key={r.role} value={r.role}>
+                // The option's VALUE is the slug the transition gate reads
+                // (row-status.md § ตารางการส่งต่อ writes `senior-developer`,
+                // not this table's `Senior Developer`) — the label stays the
+                // readable form so the picker still matches roles.md on
+                // screen.
+                <option key={r.role} value={slugifyRole(r.role)}>
                   {r.role}
                 </option>
               ))}
