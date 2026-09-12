@@ -22,17 +22,28 @@ const STAGE_LABEL: Record<string, string> = Object.fromEntries(
  */
 export function CardTransitions({
   project,
+  client,
   sliceId,
   stage,
   actingRole,
+  actingOffice,
   onMoved,
 }: {
   project: string;
+  /** The project's own `client:` frontmatter — the first segment of the
+   *  `Assignment:` trailer `commit_message()` writes. */
+  client: string;
   sliceId: string;
   stage: string;
   /** The role picked at the board header (S43a) — `null` before anyone has
    *  picked one, which every button reads as "not this seat's move yet". */
   actingRole: string | null;
+  /** `dispatch.roles[].office` for the acting role — found on first real use
+   *  (2026-09-12): leaving this unsent falls back to `-` server-side, and
+   *  `.githooks/commit-msg` blocks any commit whose `Assignment:` office is
+   *  `-`. The seat and its office travel together, never one without the
+   *  other. */
+  actingOffice: string;
   /** Called after a transition writes successfully, with the branch/commit
    *  the write landed on — the caller shows that as its confirmation. */
   onMoved: (branch: string, commit: string) => void;
@@ -73,7 +84,15 @@ export function CardTransitions({
   function send(toStage: string, form: HandoffForm) {
     if (!actingRole) return;
     setSending(toStage);
-    postTransition({ project, sliceId, toStage, role: actingRole, form })
+    postTransition({
+      project,
+      sliceId,
+      toStage,
+      role: actingRole,
+      office: actingOffice,
+      client,
+      form,
+    })
       .then((res) => {
         setSending(null);
         if (res.ok) {
