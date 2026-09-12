@@ -417,9 +417,20 @@ def apply(
     )
     add = _git(tree, "add", str(rel))
     if add.returncode != 0:
+        _git(tree, "reset", "--hard", "HEAD")
         return {"ok": False, "reason": add.stderr.strip()[:200], **_blank()}
     done = _git(tree, "commit", "-m", message)
     if done.returncode != 0:
+        # A refused commit (the workspace's own `.githooks/commit-msg`, most
+        # often) must not leave the write sitting staged-but-uncommitted —
+        # the NEXT call reads `before` off this same worktree, would see the
+        # target stage already there, and answer "แถวนี้อยู่สถานีนั้นอยู่แล้ว"
+        # for a move that never actually committed (found on first real use,
+        # 2026-09-12: an office-less commit was blocked, and every retry after
+        # the fix landed read the stale staged write as "already done").
+        # `reset --hard HEAD` returns the worktree to its last real commit so
+        # a retry starts clean, exactly as if this call had never touched it.
+        _git(tree, "reset", "--hard", "HEAD")
         return {"ok": False, "reason": done.stderr.strip()[:300], **_blank()}
     head = _git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
     return {
