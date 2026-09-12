@@ -455,3 +455,53 @@ def test_file_without_the_belt_columns_is_unchanged(tmp_path):
         and s["axis_conflict"] is None
         for s in slices
     )
+
+
+# ── S42: the owner mark does not follow a row past its own close ────────────
+
+CLOSED_OWNER_SLICES = """---
+title: "closed — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage |
+| :-: | --- | --- | :-: | --- | :--: |
+| **C0** | ปิดแล้ว แต่เนื้อพูดถึงการเคาะ | จ. | ✅ | ใบนี้ต้องมี 🖐️ ไฟเขียวเป็นราย PR ตอนนั้น — ซึ่งได้มาแล้ว | done |
+| **C1** | ยกเลิกแล้ว แต่เนื้อพูดถึงการเคาะ | อ. | ❌ | 🖐️ เจ้าของสั่งหยุด | — |
+| **C2** | ยังเปิด และรอคนเคาะจริง | พ. | ⬜ | 🖐️ **คนเคาะ ไม่ใช่ agent** | techdesign |
+| **C3** | เครื่องหมายอยู่ในช่องสถานะเอง | พฤ. | 🖐️ | รอเจ้าของ | — |
+"""
+
+
+def _closed_owner(tmp_path: Path) -> dict:
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, slices=CLOSED_OWNER_SLICES, gaps=None)), use_cache=False
+    )
+    return {s["id"]: s for s in out["projects"][0]["slices"]}
+
+
+def test_a_closed_row_keeps_its_own_column_despite_an_owner_mark_in_its_prose(tmp_path):
+    """S42 — `🖐️` in the prose of a `✅` row is description, not a queue
+    position: nothing is left for the owner to decide on a row that closed."""
+    assert _closed_owner(tmp_path)["C0"]["column"] == "done"
+
+
+def test_a_closed_row_reports_no_axis_conflict(tmp_path):
+    """The false `stuck-open` this bug produced on S35 — the finding that
+    opened S42 — is gone."""
+    assert _closed_owner(tmp_path)["C0"]["axis_conflict"] is None
+
+
+def test_a_cancelled_row_is_not_pulled_into_the_owner_column_either(tmp_path):
+    """`❌` closes a row too. Where it lands is unchanged by S42 (`todo`, for
+    want of a `_STATUS_COLUMNS` entry) — only the owner-mark override is."""
+    assert _closed_owner(tmp_path)["C1"]["column"] == "todo"
+
+
+def test_an_open_row_still_goes_to_the_owner_column(tmp_path):
+    """The rule S42 narrows is not the rule S42 removes: an open row waiting on
+    a person is still not actionable work (ADR-0029)."""
+    by_id = _closed_owner(tmp_path)
+    assert by_id["C2"]["column"] == "owner"  # mark in the prose cell
+    assert by_id["C3"]["column"] == "owner"  # mark in the สถานะ cell
