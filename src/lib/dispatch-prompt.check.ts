@@ -30,6 +30,10 @@ const slice: WorkspaceSlice = {
   note: "โค้ดตรงกับ ADR",
   role: null,
   blocked_by: [],
+  stage: '',
+  part_of: '',
+  criteria: null,
+  axis_conflict: null,
   handoff: null,
 };
 

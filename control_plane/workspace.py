@@ -52,6 +52,25 @@ COLUMN_ORDER = ("done", "running", "next", "todo", "owner", "off")
 # convention every other column in these files already uses for "none".
 _BLOCKED_EMPTY = {"", "-", "—"}
 
+# The nine belt stations of the opt-in `stage` column (row-status.md § สายพาน,
+# accepted 2026-09-12). This is the SECOND axis: `stage` says where a row sits
+# on the belt, the 8-glyph `สถานะ` column still says whether it is open. A value
+# outside this set is a route-lint Check 9 finding, not something to guess at —
+# the reader drops it to "unset" so one typo cannot move a card to a station
+# nobody declared.
+STAGE_ORDER = (
+    "backlog",
+    "techdesign",
+    "readydev",
+    "inprogress",
+    "review",
+    "readyqa",
+    "readydeploy",
+    "deployed",
+    "done",
+)
+_STAGES = frozenset(STAGE_ORDER)
+
 # Which files team-os says a project should carry (ADR-0040 §SD2). Read from the
 # workspace, never mirrored here — same discipline as _scan_dispatch. Anchored on
 # the heading because that table's column headers are Thai prose with no pinned
@@ -103,6 +122,23 @@ class Slice:
     # the "before"). Set by `_attach_default_roles`, never by `_parse_slices`:
     # the raw cell alone cannot say what it resolved to last time.
     handoff: Optional[dict] = None
+    # Opt-in `stage` column — one of STAGE_ORDER, or "" when the file has no
+    # such column / the cell is blank / the value is not a declared station.
+    stage: str = ""
+    # Opt-in `part-of` column — the `#` of the row this one is an acceptance
+    # criterion OF. "" when this row is a card in its own right.
+    part_of: str = ""
+    # Set on a PARENT row from the rows whose `part-of` names it: how many of
+    # its criteria are closed out of how many exist. `None` when no row points
+    # here — which is not the same as 0/0 (row-status.md § สายพาน: the count is
+    # assembled at DISPLAY time; the file still holds one criterion per row).
+    criteria: Optional[dict] = None
+    # The two axes disagreeing (meta/adr-slices-stage-axis-2026-09.md §SD3):
+    # "stuck-open"  — belt says done, the glyph says the row is still open
+    # "skipped-gate" — the glyph says closed from a station that is not `done`
+    # `None` when they agree or when one of them is not declared. The board
+    # prints this; it never writes a correction back.
+    axis_conflict: Optional[str] = None
 
 
 def workspace_overview(
@@ -475,10 +511,16 @@ def _parse_slices_text(text: str) -> list[Slice]:
     Split out for S40: a handoff check needs to run this same parse against a
     `git show` snapshot of an older commit, which has no path on disk.
     """
-    raw_rows: list[tuple[str, str, str, str, str, str, str]] = []
+    # Rows are dicts rather than a widening tuple: this walk already grew from
+    # 5 positional cells to 7 and then to 9, and positional coupling in this
+    # file has drawn blood once already (a `|` inside a cell shifted every
+    # column after it — row-status.md § ที่เกิดขึ้นจริงตอนเปิดคอลัมน์นี้).
+    raw_rows: list[dict] = []
     in_table = False
     role_col: Optional[int] = None
     blocked_col: Optional[int] = None
+    stage_col: Optional[int] = None
+    part_of_col: Optional[int] = None
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
@@ -499,6 +541,10 @@ def _parse_slices_text(text: str) -> list[Slice]:
                     role_col = i
                 elif name == "blocked-by":
                     blocked_col = i
+                elif name == "stage":
+                    stage_col = i
+                elif name == "part-of":
+                    part_of_col = i
             continue
 
         ident = _strip_md(cells[0])
@@ -517,30 +563,95 @@ def _parse_slices_text(text: str) -> list[Slice]:
             else ""
         )
 
-        raw_rows.append((ident, title, day, status_cell, note, role, blocked_raw))
+        stage = (
+            _strip_md(cells[stage_col]).strip().lower()
+            if stage_col is not None and stage_col < len(cells)
+            else ""
+        )
+        part_of = (
+            _strip_md(cells[part_of_col]).strip()
+            if part_of_col is not None and part_of_col < len(cells)
+            else ""
+        )
+
+        raw_rows.append(
+            {
+                "id": ident,
+                "title": title,
+                "day": day,
+                "status_cell": status_cell,
+                "note": note,
+                "role": role,
+                "blocked_raw": blocked_raw,
+                "stage": stage if stage in _STAGES else "",
+                "part_of": "" if part_of in _BLOCKED_EMPTY else part_of,
+            }
+        )
 
     # Second pass: resolve `blocked-by` against this file's own rows, now that
     # every row's column is knowable.
-    columns_by_id = {
-        ident: _column_for(status_cell, note)
-        for ident, _, _, status_cell, note, _, _ in raw_rows
-    }
-    titles_by_id = {ident: title for ident, title, *_ in raw_rows}
+    columns_by_id = {r["id"]: _column_for(r["status_cell"], r["note"]) for r in raw_rows}
+    titles_by_id = {r["id"]: r["title"] for r in raw_rows}
+    criteria_by_parent = _criteria(raw_rows, columns_by_id)
 
     rows: list[Slice] = []
-    for ident, title, day, status_cell, note, role, blocked_raw in raw_rows:
+    for r in raw_rows:
+        column = _column_for(r["status_cell"], r["note"])
         rows.append(
             Slice(
-                id=ident,
-                title=title,
-                day=day,
-                column=_column_for(status_cell, note),
-                note=note,
-                role=role,
-                blocked_by=_open_blockers(blocked_raw, columns_by_id, titles_by_id),
+                id=r["id"],
+                title=r["title"],
+                day=r["day"],
+                column=column,
+                note=r["note"],
+                role=r["role"],
+                blocked_by=_open_blockers(r["blocked_raw"], columns_by_id, titles_by_id),
+                stage=r["stage"],
+                part_of=r["part_of"],
+                criteria=criteria_by_parent.get(r["id"]),
+                axis_conflict=_axis_conflict(r["stage"], column),
             )
         )
     return rows
+
+
+def _criteria(raw_rows: list[dict], columns_by_id: dict[str, str]) -> dict[str, dict]:
+    """parent id → {done, total}, counted from the rows that name it.
+
+    A row is a criterion of its parent, and its own glyph is the tick: `✅`
+    (and `❌`, which closes a criterion by cancelling it) counts as done. The
+    parent keeps one status of its own — this count is assembled here, never
+    written back into the file (row-status.md § สายพาน).
+
+    A `part-of` naming a row that is not in this table, or naming itself, is a
+    route-lint Check 10 finding; it is dropped here rather than counted, the
+    same way `_open_blockers` drops a dangling blocker.
+    """
+    out: dict[str, dict] = {}
+    for r in raw_rows:
+        parent = r["part_of"]
+        if not parent or parent == r["id"] or parent not in columns_by_id:
+            continue
+        tally = out.setdefault(parent, {"done": 0, "total": 0})
+        tally["total"] += 1
+        if columns_by_id[r["id"]] == "done":
+            tally["done"] += 1
+    return out
+
+
+def _axis_conflict(stage: str, column: str) -> Optional[str]:
+    """Which way the two axes disagree, or None when they do not.
+
+    Only ever computed from two declared values: a file without a `stage`
+    column has one axis, and one axis cannot contradict itself.
+    """
+    if not stage:
+        return None
+    if stage == "done" and column != "done":
+        return "stuck-open"
+    if column == "done" and stage != "done":
+        return "skipped-gate"
+    return None
 
 
 def _open_blockers(

@@ -215,6 +215,21 @@ export interface WorkspaceSlice {
    *  compare against. The board announces this itself; nothing writes it
    *  back to `slices.md`. */
   handoff: { from: string; to: string } | null;
+  /** Opt-in `stage` column — one of the nine belt stations, or `""` when the
+   *  file has no such column, the cell is blank, or the value is not a
+   *  declared station (row-status.md § สายพาน · route-lint Check 9). */
+  stage: string;
+  /** Opt-in `part-of` column — the `#` of the row this one is an acceptance
+   *  criterion OF. `""` when this row is a card in its own right. */
+  part_of: string;
+  /** Set on a PARENT row: how many of its criteria are closed out of how many
+   *  exist, counted from the rows pointing here. `null` means "not a parent",
+   *  which is a different answer from `{done: 0, total: 0}`. */
+  criteria: { done: number; total: number } | null;
+  /** The two axes disagreeing — `"stuck-open"` (belt says done, glyph says
+   *  open) or `"skipped-gate"` (glyph says closed from a station that is not
+   *  `done`). The board prints it; nothing writes a correction back. */
+  axis_conflict: 'stuck-open' | 'skipped-gate' | null;
 }
 
 export interface WorkspaceProject {
