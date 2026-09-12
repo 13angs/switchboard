@@ -569,7 +569,9 @@ function SliceDialog({
           </p>
         ) : null
       }
-      compose={(role) => composePrompt(project, slice, role, shape)}
+      compose={(role) =>
+        composePrompt(project, slice, role, shape, window.location.origin)
+      }
       onClose={onClose}
     />
   );

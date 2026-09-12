@@ -502,4 +502,73 @@ assert(
   "absent scope.md not cited in the role-gap prompt",
 );
 
+// ── ADR-0047: the act prompt hands the session the onward press ──
+// The one thing worth checking offline is the thing a reviewer cannot see by
+// reading the Thai: that the block ASKS the gate instead of naming the next
+// station. A prompt that named it would be a second copy of
+// row-status.md § ตารางการส่งต่อ, which is exactly what ADR-0044 §SD5 forbids.
+const beltSlice: WorkspaceSlice = {
+  ...slice,
+  id: "S45",
+  stage: "inprogress",
+  column: "running",
+};
+const belt = composePrompt(project, beltSlice, role, "act", "http://127.0.0.1:8787");
+assert(belt.includes("/work/transitions?"), "the session asks the gate first");
+assert(belt.includes("/work/transition'"), "and presses through the same endpoint");
+for (const stage of ["readyqa", "readydeploy", "deployed", "done"])
+  assert(
+    !belt.includes(`"to_stage":"${stage}"`),
+    `the prompt never names ${stage} — the gate does`,
+  );
+// The POST has to carry every segment the commit's id is built from, or the
+// board writes a row under an id `git log --grep` will never find (S37's scar).
+for (const field of ['"project":"ai-chatbot"', '"slice_id":"S45"', '"role":"developer"', '"office":"build"', '"client":"winona"'])
+  assert(belt.includes(field), `the press carries ${field}`);
+// The two presses that are not the session's, named rather than implied.
+assert(belt.includes("การกดที่ 1 ไม่ใช่ของคุณ"), "press 1 stays with the dispatcher");
+assert(belt.includes("stop-list"), "a merge that hits the stop-list stops there");
+// The endpoint trusts the role in the body — the one hole worth saying out loud.
+assert(
+  belt.includes("ห้ามยิงซ้ำด้วย role อื่น"),
+  "re-firing as another role is forbidden in words, since the gate cannot catch it",
+);
+
+// A 🖐️ row prepares and stops (ADR-0036 §SD5) — pressing would undo that line.
+const beltOwner = composePrompt(
+  { ...project },
+  { ...beltSlice, column: "owner" },
+  role,
+  "prepare",
+  "http://127.0.0.1:8787",
+);
+assert(!beltOwner.includes("/work/transition"), "the prepare shape never presses");
+
+// The belt is opt-in per row: no stage, and no id, mean nothing to press.
+assert(
+  !composePrompt(project, slice, role, "act", "http://127.0.0.1:8787").includes(
+    "/work/transition",
+  ),
+  "a row that never joined the belt is handed no press",
+);
+assert(
+  !composePrompt(
+    project,
+    { ...beltSlice, id: "—" },
+    role,
+    "act",
+    "http://127.0.0.1:8787",
+  ).includes("/work/transition"),
+  "a row with no id is handed no press — the endpoint has nothing to address",
+);
+
+// An unresolved origin says so rather than inventing a port, the same way an
+// unresolved id segment prints `-`.
+const noOrigin = composePrompt(project, beltSlice, role, "act");
+assert(noOrigin.includes("<ที่อยู่ของบอร์ด>"), "an unknown board address is marked");
+assert(
+  !noOrigin.includes("127.0.0.1") && !noOrigin.includes("localhost"),
+  "and never guessed",
+);
+
 console.log("dispatch-prompt check: OK");

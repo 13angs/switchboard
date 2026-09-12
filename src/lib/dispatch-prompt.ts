@@ -28,6 +28,12 @@
  * "PR touching only slices.md" contract; the only difference is that the grill
  * arrives with an agenda that has already been measured.
  *
+ * Since ADR-0047 the `act` shape carries one more block: the session, not the
+ * owner, is the one who presses the card onward when its station's work is done
+ * (§SD1). It keeps the "pointers, never the rules" discipline the hard way —
+ * the block does not print the transition table, it tells the session to ASK
+ * the gate (`GET /work/transitions`) and press what the gate returns.
+ *
  * Kept in pure functions so they are checkable offline (dispatch-prompt.check.ts)
  * and so the operator previews the exact text that will be typed, not an
  * approximation of it.
@@ -124,11 +130,77 @@ export function assignmentId(
   return `${client}/${office}/${role}/${slug || "untitled"}`;
 }
 
+/**
+ * The onward press, handed to the session that is about to do the work
+ * (ADR-0047 §SD1).
+ *
+ * Three things this deliberately does NOT do:
+ *
+ *   - It does not name the next station. `GET /work/transitions` answers that
+ *     for the row's *current* stage and the acting role, out of the same
+ *     `evaluate()` the POST calls — so the prompt cannot hold a stale copy of
+ *     `row-status.md § ตารางการส่งต่อ` (ADR-0044 §SD5). A prompt that named the
+ *     station would also be wrong the first time a row is dispatched from a
+ *     station its author did not have in mind.
+ *   - It does not soften a refusal. 403/409 is the gate's answer, and the one
+ *     failure mode worth naming out loud is the one the endpoint cannot catch:
+ *     it trusts the `role` in the body, so a session that re-fires as another
+ *     role walks straight through a door that was shut for it.
+ *   - It does not appear on a row with nothing to press — no id, or no `stage`
+ *     (the belt is opt-in per row, and `candidates()` returns [] for a row that
+ *     never joined it).
+ *
+ * `boardOrigin` comes from the browser that composed the prompt. Empty means
+ * the caller could not resolve it, and the block says so with a placeholder
+ * rather than inventing a port — the same honesty the `-` segments of an
+ * assignment id are built on.
+ */
+function handoffBlock(
+  project: WorkspaceProject,
+  slice: WorkspaceSlice,
+  role: DispatchRole,
+  boardOrigin: string,
+): string[] {
+  if (!slice.id || slice.id === "—") return [];
+  if (!slice.stage) return [];
+
+  const origin = boardOrigin || "<ที่อยู่ของบอร์ด>";
+  const actor = roleSlug(role.role);
+  const q = new URLSearchParams({
+    project: project.name,
+    slice_id: slice.id,
+    role: actor,
+  }).toString();
+  const body = JSON.stringify({
+    project: project.name,
+    slice_id: slice.id,
+    to_stage: "<to_stage ที่ข้อ 1 ตอบว่า allowed>",
+    role: actor,
+    office: role.office || "-",
+    client: project.client || "internal",
+    form: {},
+  });
+
+  return [
+    "เมื่องานของสถานีนี้จบ — **กดส่งต่อเอง ไม่ต้องรอเจ้าของคลิก** (ADR-0047 §SD1):",
+    `1. ถามด่านว่าเส้นไหนเปิดให้ \`${actor}\` — อย่าอ่านตารางมาตัดสินเอง:`,
+    `   \`curl -fsS '${origin}/work/transitions?${q}'\``,
+    "2. ยิงเส้นที่ตอบว่า `allowed: true`:",
+    `   \`curl -fsS -X POST '${origin}/work/transition' -H 'Content-Type: application/json' -d '${body}'\``,
+    "   เส้นที่ `requires` บอกว่าต้องมีฟอร์ม ให้เติมค่าจริงลง `form` — ข้อความไปอยู่ใน body ของ commit ไม่ใช่ในเซลล์ (ADR-0046 §SD2)",
+    "- ถูกปฏิเสธ (403/409) คือ **คำตอบ** ไม่ใช่สิ่งกีดขวาง — `reason` บอกว่าอะไรยังไม่ผ่าน · **ห้ามยิงซ้ำด้วย role อื่นเพื่อให้ผ่าน** ด่านเชื่อ `role` ที่คุณบอกมัน",
+    "- **การกดที่ 1 ไม่ใช่ของคุณ** — `readydev → inprogress` เป็นของคนที่สั่งงาน (ADR-0047 §SD5)",
+    "- `deployed → done` คือ merge · diff ที่ชน stop-list จะได้คำตอบว่า *รอเจ้าของเคาะ* — นั่นคือจุดจบของงานคุณ ไม่ใช่เหตุให้หาทางอื่น (ADR-0047 §SD3)",
+    "",
+  ];
+}
+
 export function composePrompt(
   project: WorkspaceProject,
   slice: WorkspaceSlice,
   role: DispatchRole,
   shape: PromptShape = "act",
+  boardOrigin = "",
 ): string {
   const lines: string[] = [];
 
@@ -191,6 +263,13 @@ export function composePrompt(
       "เส้นที่เครื่องหมาย 🖐️ ขีดคือ **การกระทำ** ไม่ใช่ **การคิด** — อ่าน วิเคราะห์ ร่าง เสนอ ได้เต็มที่ · ไม่แน่ใจว่าข้อไหนนับเป็นการกระทำ → ถือว่าใช่ แล้วถาม",
     );
     lines.push("");
+  }
+
+  // Only the `act` shape presses. A 🖐️ row is dispatched to *prepare* a
+  // decision and stop (ADR-0036 §SD5) — handing it the onward press would undo
+  // the line that mark draws.
+  if (shape === "act") {
+    for (const l of handoffBlock(project, slice, role, boardOrigin)) lines.push(l);
   }
 
   const id = assignmentId(project, slice, role);
