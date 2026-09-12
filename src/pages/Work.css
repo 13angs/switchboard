@@ -82,6 +82,23 @@
   color: var(--faint);
   margin-left: 4px;
 }
+/* ── S43a — who is sworn in at the header ── */
+.work-subbar .acting-role {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.work-subbar .acting-role select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
 .work-subbar .participation {
   margin-left: auto;
   padding: 4px 11px;
@@ -584,6 +601,44 @@
   font-size: 10px;
   line-height: 1.45;
   color: var(--faint);
+}
+
+/* ── S43a–S43c — forward-handoff buttons on a belt card ── */
+.transition-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.card .transition-btn {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.card .transition-btn:hover:not(:disabled) {
+  background: var(--ok-soft);
+}
+.card .transition-btn.off,
+.card .transition-btn:disabled {
+  border-color: var(--line);
+  color: var(--faint);
+  cursor: not-allowed;
+}
+.transition-hint,
+.transition-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--faint);
+}
+.transition-error {
+  color: var(--blocked);
 }
 
 /* ── dispatch dialog ── */

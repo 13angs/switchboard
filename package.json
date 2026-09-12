@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "check:lib": "npm run check:export && npm run check:rawjson && npm run check:cost && npm run check:timeline && npm run check:dispatch && npm run check:project && npm run check:gaps && npm run check:register && npm run check:belt",
+    "check:lib": "npm run check:export && npm run check:rawjson && npm run check:cost && npm run check:timeline && npm run check:dispatch && npm run check:project && npm run check:gaps && npm run check:register && npm run check:belt && npm run check:actingrole && npm run check:transitionform",
     "check:export": "esbuild src/lib/export-markdown.check.ts --bundle --format=esm | node --input-type=module",
     "check:rawjson": "esbuild src/lib/raw-json.check.ts --bundle --format=esm | node --input-type=module",
     "preview": "vite preview",
@@ -15,7 +15,9 @@
     "check:project": "esbuild src/lib/project-filter.check.ts --bundle --format=esm | node --input-type=module",
     "check:gaps": "esbuild src/lib/project-gaps.check.ts --bundle --format=esm | node --input-type=module",
     "check:register": "esbuild src/lib/role-register.check.ts --bundle --format=esm | node --input-type=module",
-    "check:belt": "esbuild src/lib/belt.check.ts --bundle --format=esm | node --input-type=module"
+    "check:belt": "esbuild src/lib/belt.check.ts --bundle --format=esm | node --input-type=module",
+    "check:actingrole": "esbuild src/lib/acting-role.check.ts --bundle --format=esm | node --input-type=module",
+    "check:transitionform": "esbuild src/lib/transition-form.check.ts --bundle --format=esm | node --input-type=module"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

@@ -158,8 +158,14 @@ def drift(root: Path) -> list[str]:
     if not table["present"]:
         return [table["reason"]]
     declared, implemented = set(table["moves"]), set(_CHECKS)
-    out = [f"{s} → {d}: ตารางประกาศไว้ แต่โค้ดไม่มีตัวตรวจ" for s, d in sorted(declared - implemented)]
-    out += [f"{s} → {d}: โค้ดมีตัวตรวจ แต่ตารางไม่ประกาศแล้ว" for s, d in sorted(implemented - declared)]
+    out = [
+        f"{s} → {d}: ตารางประกาศไว้ แต่โค้ดไม่มีตัวตรวจ"
+        for s, d in sorted(declared - implemented)
+    ]
+    out += [
+        f"{s} → {d}: โค้ดมีตัวตรวจ แต่ตารางไม่ประกาศแล้ว"
+        for s, d in sorted(implemented - declared)
+    ]
     return out
 
 
@@ -180,7 +186,12 @@ def evaluate(
     form = form or {}
     table = transitions(root)
     if not table["present"]:
-        return {"allowed": False, "reason": table["reason"], "roles": [], "requires": ""}
+        return {
+            "allowed": False,
+            "reason": table["reason"],
+            "roles": [],
+            "requires": "",
+        }
 
     move = table["moves"].get((row.get("stage") or "", to_stage))
     if move is None:
@@ -219,6 +230,48 @@ def evaluate(
         "roles": move["roles"],
         "requires": move["requires"],
     }
+
+
+# ── every move a screen might offer (S43b) ──────────────────────────────────
+#
+# Free-text form fields that only appear once someone opens a dialog to type
+# them: probing with a placeholder answers "would this role clear
+# role/blocked-by/criteria", never "is the form filled" — that second question
+# has no answer until there is a form to fill, and `apply()` asks it for real
+# with what the operator actually typed. A button this list marks `allowed`
+# can still come back 409 at submit if the real form is missing something;
+# what it must never do is disagree with `evaluate()` about role/blockers/
+# criteria, because that disagreement is exactly the second gate ADR-0044
+# §SD5 forbids.
+_FORM_PROBE = {"env": "x", "risk": "x", "reason": "x", "release": "x", "data": "x"}
+
+
+def candidates(root: Path, *, row: dict, actor_role: str) -> list[dict]:
+    """Every declared move out of `row`'s current stage, each evaluated for
+    `actor_role` — the list a screen renders buttons from instead of holding
+    its own copy of the table (slices.md S43a · S43b).
+
+    Ordered by belt station (`STAGE_ORDER`), not by the table's own line
+    order, so a caller never has to re-sort a dict to get a stable display.
+    """
+    stage = row.get("stage") or ""
+    table = transitions(root)
+    if not table["present"]:
+        return []
+    order = {s: i for i, s in enumerate(STAGE_ORDER)}
+    moves = sorted(
+        (pair for pair in table["moves"] if pair[0] == stage),
+        key=lambda pair: order.get(pair[1], len(order)),
+    )
+    return [
+        {
+            "to_stage": dst,
+            **evaluate(
+                root, row=row, to_stage=dst, actor_role=actor_role, form=_FORM_PROBE
+            ),
+        }
+        for _, dst in moves
+    ]
 
 
 # ── the write path (ADR-0044 §SD1 · §SD2) ───────────────────────────────────
@@ -400,7 +453,11 @@ def commit_message(
     would be overwritten next round and the reason for this round would vanish.
     """
     head = f"docs(slices): {row['id']} {row.get('stage') or '—'} → {to_stage}"
-    lines = [head, "", f"what: ย้ายสถานีของแถว {row['id']} ใน projects/{project}/slices.md"]
+    lines = [
+        head,
+        "",
+        f"what: ย้ายสถานีของแถว {row['id']} ใน projects/{project}/slices.md",
+    ]
     for key, label in (
         ("env", "ทดสอบที่"),
         ("risk", "ข้อควรระวัง"),
@@ -428,7 +485,9 @@ def commit_message(
 # ── telling the next station (ADR-0046 §SD3) ────────────────────────────────
 
 
-def payload(*, project: str, row: dict, to_stage: str, actor_role: str, form: dict) -> dict:
+def payload(
+    *, project: str, row: dict, to_stage: str, actor_role: str, form: dict
+) -> dict:
     """What goes out when a card changes station. Shape is the contract."""
     return {
         "event": "card.stage_changed",
@@ -439,7 +498,9 @@ def payload(*, project: str, row: dict, to_stage: str, actor_role: str, form: di
         "actor": actor_role,
         # Only the fields the form declares — never a whole cell of the table,
         # which is a paragraph by nature (S41 measured 1,894 characters).
-        "handoff": {k: form[k] for k in ("env", "risk", "release", "reason") if form.get(k)},
+        "handoff": {
+            k: form[k] for k in ("env", "risk", "release", "reason") if form.get(k)
+        },
     }
 
 

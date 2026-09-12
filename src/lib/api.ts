@@ -601,3 +601,84 @@ export async function fetchRoleActivity(
   if (!res.ok) throw new Error(data?.error || `roles/activity ${res.status}`);
   return data as RoleActivityResponse;
 }
+
+// ── Belt transitions (ADR-0044 §SD5 · slices.md S43) ──
+
+/** One move `GET /work/transitions` answers for — the same shape
+ *  `transition.evaluate()` returns, plus the station it would land on. */
+export interface TransitionCandidate {
+  to_stage: string;
+  allowed: boolean;
+  reason: string | null;
+  roles: string[];
+  requires: string;
+}
+
+export type WorkspaceTransitions =
+  | { present: false; reason: string; moves: [] }
+  | { present: true; reason: ''; moves: TransitionCandidate[] };
+
+/** Read-only preview of every move out of one row's current stage, for one
+ *  acting role — the board's buttons are a picture of this, never a second
+ *  copy of `team-os/ways-of-working/row-status.md § ตารางการส่งต่อ`. */
+export async function fetchTransitions(
+  project: string,
+  sliceId: string,
+  role: string,
+): Promise<WorkspaceTransitions> {
+  const qs = new URLSearchParams({ project, slice_id: sliceId, role });
+  const res = await fetch(`${BASE}/work/transitions?${qs.toString()}`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `work/transitions ${res.status}`);
+  return data as WorkspaceTransitions;
+}
+
+export interface HandoffForm {
+  env?: string;
+  risk?: string;
+  data?: string;
+  reason?: string;
+  release?: string;
+}
+
+export interface TransitionResult {
+  ok: boolean;
+  reason: string | null;
+  branch: string;
+  commit: string;
+  worktree: string;
+  notified?: { sent: boolean; reason: string; status?: number };
+}
+
+/** POST the same gate `fetchTransitions` only previewed — the endpoint that
+ *  actually writes the row in the card's own worktree (ADR-0044 §SD1). A 409
+ *  here means the gate said no; the caller shows `reason`, it does not retry
+ *  with a "corrected" request the UI invented. */
+export async function postTransition(args: {
+  project: string;
+  sliceId: string;
+  toStage: string;
+  role: string;
+  office?: string;
+  client?: string;
+  form?: HandoffForm;
+}): Promise<TransitionResult> {
+  const res = await fetch(`${BASE}/work/transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project: args.project,
+      slice_id: args.sliceId,
+      to_stage: args.toStage,
+      role: args.role,
+      office: args.office,
+      client: args.client,
+      form: args.form ?? {},
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok && res.status !== 409) {
+    throw new Error(data?.error || `work/transition ${res.status}`);
+  }
+  return data as TransitionResult;
+}
