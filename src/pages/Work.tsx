@@ -205,6 +205,24 @@ export function WorkPage() {
 
       {error && <div className="work-error">อ่านไม่ได้: {error}</div>}
 
+      {/* S40 — a row's `role` cell changing value is a handoff between
+          stations; without this, the only way to notice is opening every
+          project and reading every card's role by eye. Computed fresh from
+          git history on every read (no ack, no storage) so a second real
+          edit to the same row surfaces again on its own. */}
+      {view === 'board' && data && data.handoffs.length > 0 && (
+        <section className="handoff-strip" aria-label="แถวที่เพิ่งเปลี่ยนมือ">
+          <span className="handoff-title">ส่งไม้แล้ว</span>
+          <ul>
+            {data.handoffs.map((h) => (
+              <li key={`${h.project}-${h.id}`}>
+                <b>{h.project}</b> {h.id} · {h.title} — {h.from} → {h.to}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {view === 'board' && data && data.gaps.present && (
         <section className="gap-strip" aria-label="ช่องว่างของโครงเอกสาร">
           <span className="gap-title">ช่องว่างที่ประกาศไว้</span>
