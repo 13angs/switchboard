@@ -124,21 +124,51 @@ def test_reads_tier_map_and_roles_from_the_workspace(tmp_path):
         "standard": "claude-sonnet-5",
         "heavy": "claude-opus-5",
     }
+    # `office` is "" here on purpose: this fixture has no § แกนความเป็นเจ้าของ
+    # to read one from, and an unknown office must stay unknown (S37).
     assert d["roles"] == [
-        {"role": "CTO", "tier": "heavy", "model": "claude-opus-5", "effort": None},
+        {
+            "role": "CTO",
+            "office": "",
+            "tier": "heavy",
+            "model": "claude-opus-5",
+            "effort": None,
+        },
         {
             "role": "Developer",
+            "office": "",
             "tier": "standard",
             "model": "claude-sonnet-5",
             "effort": None,
         },
         {
             "role": "QA",
+            "office": "",
             "tier": "standard",
             "model": "claude-sonnet-5",
             "effort": None,
         },
     ]
+
+
+def test_dispatch_role_carries_the_office_off_the_ownership_table(tmp_path):
+    """S37 — the `Assignment:` office segment is two columns left of the tier.
+
+    Joined by slug, because § โมเดลต่อ role writes `Senior Developer` and
+    § แกนความเป็นเจ้าของ writes `senior-developer`. Before this, the board
+    printed `-` for office and `.githooks/commit-msg` refused every commit
+    that carried the id it handed the session.
+    """
+    out = workspace.workspace_overview(
+        str(_repo(tmp_path, roles=ROLES_WITH_OWNERSHIP)), use_cache=False
+    )
+    offices = {r["role"]: r["office"] for r in out["dispatch"]["roles"]}
+    assert offices["CTO"] == "build"
+    assert offices["Senior Developer"] == "build"
+    assert offices["Product Owner"] == "business"
+    # QA sits in the tier table but not in the ownership one: that is a gap in
+    # roles.md, and the board reports it rather than inventing an office.
+    assert offices["QA"] == ""
 
 
 def test_appendix_table_is_not_read_as_roles(tmp_path):

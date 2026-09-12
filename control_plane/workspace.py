@@ -677,6 +677,24 @@ def _scan_dispatch(root: Path) -> dict:
             "reason": f"ไม่พบตาราง role → tier ใน {roles_file.name}",
         }
 
+    # S37 — the office segment of `Assignment:` comes off the same roles.md
+    # table, two columns to the left of the tier the dispatch row already
+    # carries. Reading it here rather than in the browser keeps the id's four
+    # segments resolved by the one parser that owns that table: a prompt that
+    # prints `-` for office is a prompt whose commit `.githooks/commit-msg`
+    # rejects, and the operator then edits the id by hand — which is exactly
+    # how work lands under the wrong office.
+    #
+    # `""` (not `-`) when the role is missing from § แกนความเป็นเจ้าของ: the
+    # convention's own "not resolved" marker is written by the caller that
+    # formats the id, not smuggled in as data.
+    # Joined by slug, not by the cell text: § โมเดลต่อ role writes `CTO` and
+    # § แกนความเป็นเจ้าของ writes `cto`. The ritual path (`_rituals`) already
+    # joins them this way — one convention, not two.
+    ownership = _parse_ownership(roles_file)
+    for row in roles:
+        row["office"] = (ownership.get(_slug(row["role"])) or {}).get("office", "")
+
     return {
         "present": True,
         "tiers": tiers,

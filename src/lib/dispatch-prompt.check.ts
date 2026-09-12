@@ -45,6 +45,7 @@ const project: WorkspaceProject = {
 
 const role: DispatchRole = {
   role: "Developer",
+  office: "build",
   tier: "standard",
   model: "claude-sonnet-5",
   effort: "medium",
@@ -100,15 +101,28 @@ assert(
   "slices.md always cited — the board read it to get here",
 );
 
-// ── assignment: honest about the segment the board cannot resolve ──
+// ── assignment: S37 — the dispatched role fills the office and role segments ──
 assert(
-  assignmentId(project, slice) === "winona/-/forge/m2",
-  "id built from frontmatter",
+  assignmentId(project, slice, role) === "winona/build/developer/m2",
+  "office and role come off the dispatched role (slugged), not the file's team:",
 );
-assert(p.includes("Assignment: winona/-/forge/m2"), "id reaches the prompt");
 assert(
-  p.includes("resolve เอง"),
-  "the unresolved segment is flagged, not passed off as done",
+  p.includes("Assignment: winona/build/developer/m2"),
+  "id reaches the prompt",
+);
+assert(
+  !p.includes("resolve เอง"),
+  "a fully resolved id carries no caveat to edit it by hand",
+);
+
+// ── ...and stays honest when there is no actor to read it off ──
+assert(
+  assignmentId(project, slice) === "winona/-/-/m2",
+  "no actor ⇒ both segments print the convention's own `-`",
+);
+assert(
+  composePrompt(project, slice, { ...role, office: "" }).includes("resolve เอง"),
+  "a segment that really did not resolve is still flagged",
 );
 
 // ── a project with no client/team declared does not invent one ──
@@ -117,10 +131,14 @@ assert(
   assignmentId(anon, slice) === "internal/-/-/m2",
   "unknown owner falls back, not guessed",
 );
+assert(
+  assignmentId(anon, slice, role) === "internal/build/developer/m2",
+  "a missing client falls back without dragging the resolved segments down",
+);
 
 // ── a slice with no id still produces a usable slug ──
 const noId: WorkspaceSlice = { ...slice, id: "—", title: "buffer วันพุธ" };
-assert(!assignmentId(project, noId).endsWith("/"), "slug never empty");
+assert(!assignmentId(project, noId, role).endsWith("/"), "slug never empty");
 
 // ── ADR-0036 §SD5 — the 🖐️ column dispatches, in a different shape ──
 // One resolver decides both the button's word and the prompt behind it. If a
@@ -176,7 +194,7 @@ assert(
 
 // ── same row, same id: preparing a decision and doing it are one piece of work ──
 assert(
-  prep.includes(`Assignment: ${assignmentId(project, ownerSlice)}`),
+  prep.includes(`Assignment: ${assignmentId(project, ownerSlice, role)}`),
   "prepare carries the row's own id, not a second one",
 );
 
@@ -203,6 +221,7 @@ const ritual: Ritual = {
 };
 
 const po: DispatchRole = {
+  office: "business",
   role: "Product Owner",
   tier: "standard",
   model: "claude-sonnet-5",
@@ -268,6 +287,7 @@ assert(
 // ── ADR-0037 — the fourth shape: grill, before a row exists ──
 
 const grillRole: DispatchRole = {
+  office: "business",
   role: "forge",
   tier: "heavy",
   model: "claude-opus-5",
@@ -387,6 +407,7 @@ assert(!fgBare.includes(`projects/${bare.name}/scope.md`), "absent scope.md not 
 // ── the fifth shape: a role closing its own §7.2 line (ADR-0042 §SD5) ──
 
 const devopsRole: DispatchRole = {
+  office: "run",
   role: "DevOps",
   tier: "standard",
   model: "claude-sonnet-5",

@@ -86,9 +86,9 @@ const dispatch: WorkspaceDispatch = {
   roles: [
     // Deliberately a different order from the ownership table, the way the two
     // real sections of roles.md are ordered differently.
-    { role: 'Developer', tier: 'standard', model: 'claude-sonnet-5', effort: 'medium' },
-    { role: 'CTO', tier: 'heavy', model: 'claude-opus-5', effort: 'xhigh' },
-    { role: 'QA', tier: 'standard', model: 'claude-sonnet-5', effort: 'high' },
+    { role: 'Developer', office: 'build', tier: 'standard', model: 'claude-sonnet-5', effort: 'medium' },
+    { role: 'CTO', office: 'build', tier: 'heavy', model: 'claude-opus-5', effort: 'xhigh' },
+    { role: 'QA', office: 'run', tier: 'standard', model: 'claude-sonnet-5', effort: 'high' },
   ],
   source: { tiers: 'sop', roles: 'roles.md' },
 };
@@ -112,7 +112,7 @@ const spaced = roleRegister({
   dispatch: {
     ...(dispatch as Extract<WorkspaceDispatch, { present: true }>),
     roles: [
-      { role: 'Product Owner', tier: 'standard', model: 'claude-sonnet-5', effort: 'medium' },
+      { role: 'Product Owner', office: 'business', tier: 'standard', model: 'claude-sonnet-5', effort: 'medium' },
     ],
   },
 });

@@ -251,7 +251,15 @@ export type WorkspaceDispatch =
   | {
       present: true;
       tiers: Record<string, string>;
-      roles: { role: string; tier: string; model: string; effort: string | null }[];
+      roles: {
+        role: string;
+        /** Off the same roles.md row as the tier (S37) — `""` when
+         *  § แกนความเป็นเจ้าของ does not carry this role. */
+        office: string;
+        tier: string;
+        model: string;
+        effort: string | null;
+      }[];
       source: { tiers: string; roles: string };
     };
 
