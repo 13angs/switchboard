@@ -94,6 +94,11 @@ export function DispatchDialog({
     ? tier in tierPicker.tiers
       ? {
           role: tierPicker.role,
+          // ADR-0037 §SD1 — grill's role is a literal (`forge`), deliberately
+          // not resolved through the 7-role table, so there is no row to read
+          // an office off. Empty is the honest value; `composeGrillPrompt`
+          // builds its own id and never reads this field.
+          office: '',
           tier,
           model: tierPicker.tiers[tier],
           // roles.md § โมเดลต่อ role: light rejects --effort outright.

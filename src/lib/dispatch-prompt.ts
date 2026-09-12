@@ -33,9 +33,14 @@
  * approximation of it.
  */
 import type { Ritual, WorkspaceProject, WorkspaceSlice } from "./api";
+import { roleSlug } from "./project-gaps";
 
 export interface DispatchRole {
   role: string;
+  /** The role's office, off the same roles.md row as its tier (S37). `""`
+   *  when § แกนความเป็นเจ้าของ does not carry this role — the id then prints
+   *  the convention's `-` rather than inventing an office. */
+  office: string;
   tier: string;
   model: string;
   /** ADR-0032 — omitted (null) when roles.md carries no effort column, or
@@ -84,10 +89,18 @@ const CENTRAL_RULES = [
 /**
  * The assignment id, as far as the board can honestly resolve it.
  *
- * `client` and `team` come from the project's own slices.md frontmatter. The
- * *office* segment is not written anywhere the board reads, so it is left as
- * `-` and the session is told to resolve it — the convention's own marker for
- * "not resolved", rather than a guess that would silently misfile the work.
+ * `client` comes from the project's own slices.md frontmatter. The other two
+ * segments come from the **role that is being dispatched** (S37): its slug is
+ * one of the seven `roles.md` declares, and its office rides the same row.
+ * Before S37 this printed the file's `team:` — a *discipline* slug such as
+ * `arch` — into the role segment and `-` into the office, and
+ * `.githooks/commit-msg` rejected every commit that carried it (measured
+ * 2026-09-11 on `W17`: `internal/-/arch/w17`, refused on both segments).
+ *
+ * Passing no actor is still valid and still honest: both segments fall back to
+ * `-`, the convention's own "not resolved, nothing was read" marker. Callers
+ * that have a picked role should pass it — a guessed office misfiles work
+ * where `git log --grep '^Assignment: <client>/'` will never find it again.
  *
  * The shape of the prompt does not change the id: preparing a decision on a row
  * and doing the row are the same piece of work, and `git log --grep` has to
@@ -96,15 +109,19 @@ const CENTRAL_RULES = [
 export function assignmentId(
   project: WorkspaceProject,
   slice: WorkspaceSlice,
+  actor?: DispatchRole | null,
 ): string {
   const client = project.client || "internal";
-  const team = project.team || "-";
+  const office = actor?.office || "-";
+  // The tier table writes `Senior Developer`; the id — and every other surface
+  // that joins these two halves — uses the slug.
+  const role = actor?.role ? roleSlug(actor.role) : "-";
   const slug = (slice.id !== "—" && slice.id ? slice.id : slice.title)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
-  return `${client}/-/${team}/${slug || "untitled"}`;
+  return `${client}/${office}/${role}/${slug || "untitled"}`;
 }
 
 export function composePrompt(
@@ -176,10 +193,15 @@ export function composePrompt(
     lines.push("");
   }
 
-  lines.push(`Assignment: ${assignmentId(project, slice)}`);
-  lines.push(
-    "(ช่อง office เป็น `-` เพราะบอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต)",
-  );
+  const id = assignmentId(project, slice, role);
+  lines.push(`Assignment: ${id}`);
+  // Only when a segment really did not resolve. Printing the caveat next to a
+  // complete id taught the operator to edit an id that was already correct.
+  if (id.includes("/-/")) {
+    lines.push(
+      "(ช่องที่เป็น `-` คือช่องที่บอร์ดอ่านไม่ได้ — resolve เองจาก docs/sops/sop-work-ownership.md ก่อนคอมมิต)",
+    );
+  }
 
   return lines.join("\n");
 }
