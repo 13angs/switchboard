@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -575,3 +576,164 @@ def test_an_unreachable_webhook_is_swallowed_not_raised(monkeypatch):
     monkeypatch.setenv("WORK_WEBHOOK_URL", "http://127.0.0.1:9/none")
     out = transition.notify({"a": 1})
     assert out["sent"] is False and out["reason"]
+
+
+# ── the publish leg (S46 · ADR-0048) ────────────────────────────────────────
+#
+# What these pin: the board carries the press out of the machine itself, and it
+# does it with exactly two verbs. `gh` is stubbed with a script that RECORDS ITS
+# ARGV — the same discipline test_dispatch.py takes with `claude`, and for the
+# same reason: the thing worth testing is the command that would have been run,
+# not GitHub's answer to it. The push half is real git against a real bare repo,
+# because a fake push would prove nothing about the refspec.
+
+
+@pytest.fixture
+def remote(repo, tmp_path):
+    """`repo`, with a real bare `origin` it can actually push to."""
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    return bare
+
+
+def _stub_gh(tmp_path, monkeypatch, *, listed: str = "[]", created: str = "") -> Path:
+    """A `gh` on PATH that appends its argv to a log and answers canned JSON."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "gh-argv.log"
+    (bin_dir / "gh").write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        'case "$1 $2" in\n'
+        f'  "pr list") printf %s {listed!r} ;;\n'
+        f'  "pr create") printf %s {created!r} ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    return log
+
+
+def test_a_press_pushes_the_branch_and_opens_the_cards_pr(
+    remote, repo, tmp_path, monkeypatch
+):
+    log = _stub_gh(tmp_path, monkeypatch, created="https://github.com/o/r/pull/77")
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is True, out["reason"]
+    assert out["published"]["pushed"] is True, out["published"]["reason"]
+    assert out["published"]["pr"] == 77
+    assert out["published"]["url"].endswith("/pull/77")
+    # the commit really is on the remote, on the card's own branch
+    assert (
+        _git(remote, "rev-parse", out["branch"]).stdout.strip()
+        == _git(Path(out["worktree"]), "rev-parse", "HEAD").stdout.strip()
+    )
+    argv = log.read_text(encoding="utf-8")
+    assert "pr list --head worktree-internal-developer-demo-t1" in argv
+    assert "pr create --base main --head worktree-internal-developer-demo-t1" in argv
+
+
+def test_a_second_press_grows_the_same_pr_instead_of_opening_another(
+    remote, repo, tmp_path, monkeypatch
+):
+    """One card is one PR (ADR-0044 §SD1) ⇒ the verb is *ensure* (§SD2). The
+    second press must find the open PR and stop, or every station on the belt
+    would leave a PR behind."""
+    log = _stub_gh(
+        tmp_path,
+        monkeypatch,
+        listed='[{"number":77,"url":"https://github.com/o/r/pull/77"}]',
+    )
+    first = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    second = transition.apply(
+        repo,
+        project="demo",
+        row=_row(stage="inprogress"),
+        to_stage="review",
+        actor_role="developer",
+    )
+    assert first["published"]["pr"] == 77 and second["published"]["pr"] == 77
+    assert "pr create" not in log.read_text(encoding="utf-8")
+    assert second["branch"] == first["branch"]
+
+
+def test_a_push_that_fails_reports_but_does_not_undo_the_commit(
+    repo, tmp_path, monkeypatch
+):
+    """ADR-0048 §SD4 — the commit holds the words the operator typed into the
+    handoff form. A network failure is a report, not a reason to throw them
+    away; the next press pushes it, because the ensure is idempotent."""
+    _stub_gh(tmp_path, monkeypatch)
+    _git(repo, "remote", "add", "origin", str(tmp_path / "nowhere.git"))
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is True
+    assert out["published"]["pushed"] is False and out["published"]["reason"]
+    tree = Path(out["worktree"])
+    assert (
+        _git(tree, "log", "-1", "--pretty=%s")
+        .stdout.strip()
+        .startswith("docs(slices): T1")
+    )
+    assert _git(tree, "status", "--porcelain").stdout == ""
+
+
+def test_no_remote_at_all_is_not_a_failed_press(repo, tmp_path, monkeypatch):
+    """A clone with nowhere to push is a legitimate state — and the press that
+    moved the row still happened."""
+    _stub_gh(tmp_path, monkeypatch)
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is True
+    assert out["published"] == {
+        "pushed": False,
+        "pr": 0,
+        "url": "",
+        "reason": "ไม่มี remote origin",
+    }
+
+
+def test_a_refused_press_still_answers_the_published_shape(repo):
+    """Every answer carries the same keys — a caller reading `published` off a
+    refusal gets "nothing was published", not a KeyError."""
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="qa"
+    )
+    assert out["ok"] is False
+    assert out["published"] == {"pushed": False, "pr": 0, "url": "", "reason": ""}
+
+
+def test_publish_refuses_a_branch_that_is_not_a_card_branch(remote, repo):
+    """The guard exists for one value: `main`. The refspec is built from the
+    branch name, so a name that did not come from `apply()` never reaches git
+    (ADR-0048 §SD3)."""
+    import subprocess
+
+    out = transition.publish(repo, "main", title="t", body="b")
+    assert out["pushed"] is False and "branch ของการ์ด" in out["reason"]
+    # nothing reached the remote: `main` does not exist there
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "main"],
+        cwd=str(remote),
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode != 0
+
+
+def test_the_pr_body_names_the_card_and_the_branch_it_grows_on():
+    body = transition.pr_body(
+        project="demo", row=_row(), branch="worktree-internal-developer-demo-t1"
+    )
+    assert "**T1**" in body and "projects/demo/slices.md" in body
+    assert "worktree-internal-developer-demo-t1" in body
+    assert "merge commit" in body  # the >1-id warning pr-check will echo

@@ -4,6 +4,7 @@ import {
   postTransition,
   type HandoffForm,
   type TransitionCandidate,
+  type TransitionPublished,
 } from '../lib/api';
 import { BELT_COLUMNS } from '../lib/belt';
 import { formShapeFor, type FormShape } from '../lib/transition-form';
@@ -45,8 +46,10 @@ export function CardTransitions({
    *  other. */
   actingOffice: string;
   /** Called after a transition writes successfully, with the branch/commit
-   *  the write landed on — the caller shows that as its confirmation. */
-  onMoved: (branch: string, commit: string) => void;
+   *  the write landed on and where it got to outside this machine (S46 /
+   *  ADR-0048) — the caller shows that as its confirmation. `published` is
+   *  absent only against a server older than S46. */
+  onMoved: (branch: string, commit: string, published?: TransitionPublished) => void;
 }) {
   const [moves, setMoves] = useState<TransitionCandidate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +100,7 @@ export function CardTransitions({
         setSending(null);
         if (res.ok) {
           setPendingForm(null);
-          onMoved(res.branch, res.commit);
+          onMoved(res.branch, res.commit, res.published);
         } else {
           setError(res.reason ?? 'ด่านปฏิเสธ');
         }

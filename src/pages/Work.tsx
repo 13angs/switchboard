@@ -5,6 +5,7 @@ import {
   type WorkspaceProject,
   type WorkspaceSlice,
   type WorkspaceDispatch,
+  type TransitionPublished,
 } from '../lib/api';
 import {
   composePrompt,
@@ -206,9 +207,22 @@ export function WorkPage() {
   // merged (the same one-PR lag the board already prints for every other
   // write path). The toast is the confirmation; the board catching up is a
   // separate, already-known lag, not a bug this slice owns.
+  //
+  // What the toast says about the PR is the one thing S46 added: the press
+  // pushes the branch and makes sure the card's PR is open (ADR-0048), so the
+  // confirmation names the PR — and when it could not leave the machine, it
+  // says so in the same line rather than looking identical to a press that
+  // did (§SD4: not pushed is a report, not a failed press).
   const onMoved = useCallback(
-    (branch: string, commit: string) => {
-      toast(`ส่งต่อแล้ว · ${branch} ${commit}`);
+    (branch: string, commit: string, published?: TransitionPublished) => {
+      const where = !published
+        ? ''
+        : published.pr
+          ? ` · PR #${published.pr}`
+          : published.pushed
+            ? ` · ดันขึ้นแล้ว แต่ยังไม่มี PR${published.reason ? ` (${published.reason})` : ''}`
+            : ` · ยังไม่ขึ้น GitHub (${published.reason || 'ไม่ทราบสาเหตุ'})`;
+      toast(`ส่งต่อแล้ว · ${branch} ${commit}${where}`);
       load();
     },
     [toast, load],
@@ -759,7 +773,7 @@ function ProjectBoard({
    *  transition's `Assignment:` never falls back to `-` (§ found on first
    *  real use, 2026-09-12). */
   actingOffice: string;
-  onMoved: (branch: string, commit: string) => void;
+  onMoved: (branch: string, commit: string, published?: TransitionPublished) => void;
   onDispatch: (slice: WorkspaceSlice) => void;
   onGrill: () => void;
   onGaps: () => void;
