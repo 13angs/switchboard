@@ -15,6 +15,7 @@ Stdlib only (tests/test_stdlib_purity.py enforces it).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Callable, Optional
@@ -218,3 +219,249 @@ def evaluate(
         "roles": move["roles"],
         "requires": move["requires"],
     }
+
+
+# ── the write path (ADR-0044 §SD1 · §SD2) ───────────────────────────────────
+#
+# The board writes in the CARD'S OWN worktree, never in the main checkout: the
+# Hard Rule `Worktree-Per-Task` is not bent here, it is the mechanism. What
+# changed at ADR-0044 is who types, not where.
+
+import os
+import subprocess
+import urllib.error
+import urllib.request
+
+# Where the workspace keeps its own worktrees — gitignored, declared by
+# `.gitignore` rather than chosen here.
+_WORKTREE_DIR = (".claude", "worktrees")
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+    )
+
+
+def task_slug(project: str, row_id: str) -> str:
+    """The slug the card's branch and `Assignment:` share.
+
+    Project-qualified because row ids are only unique within a file: `S1` of
+    switchboard and `W1` of workspace are different pieces of work, and a
+    branch name that conflated them would put two cards on one branch.
+    """
+    raw = f"{project}-{row_id}".lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", raw)).strip("-")[:40]
+
+
+def set_cell(text: str, row_id: str, column: str, value: str) -> Optional[str]:
+    """Return `text` with one cell of one row replaced, or None if not found.
+
+    Column by header TEXT, row by its `#` — never by position. The rest of the
+    line is rebuilt from its own cells, so a row this function does not touch is
+    byte-identical and a row it does touch keeps every other cell as written.
+    """
+    lines = text.split("\n")
+    header = next(
+        (i for i, l in enumerate(lines) if l.startswith("|") and "สถานะ" in l), None
+    )
+    if header is None:
+        return None
+    cells = [c.strip() for c in lines[header].strip().strip("|").split("|")]
+    try:
+        col = next(i for i, c in enumerate(cells) if _strip_md(c).lower() == column)
+    except StopIteration:
+        return None
+
+    for i in range(header + 2, len(lines)):
+        if not lines[i].startswith("|"):
+            break
+        row = lines[i].strip().strip("|").split("|")
+        if len(row) <= col or _strip_md(row[0]) != row_id:
+            continue
+        row[col] = f" {value} "
+        lines[i] = "|" + "|".join(row) + "|"
+        return "\n".join(lines)
+    return None
+
+
+def _worktree(root: Path, slug: str, branch: str) -> tuple[Optional[Path], str]:
+    """The card's worktree, created on first use. `(path, error)`."""
+    path = root.joinpath(*_WORKTREE_DIR, slug)
+    if path.exists():
+        return path, ""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    made = _git(root, "worktree", "add", "-B", branch, str(path))
+    if made.returncode != 0:
+        return None, f"เปิด worktree ไม่ได้: {made.stderr.strip()[:200]}"
+    return path, ""
+
+
+def apply(
+    root: Path,
+    *,
+    project: str,
+    row: dict,
+    to_stage: str,
+    actor_role: str,
+    office: str = "-",
+    client: str = "internal",
+    form: Optional[dict] = None,
+) -> dict:
+    """Run the gate, then write the row in the card's own worktree.
+
+    Returns `{ok, reason, branch, commit, worktree}`. Nothing is written unless
+    `evaluate()` allowed it — the UI's disabled button is a picture of this
+    call's answer, and a request that skips the UI meets the same gate here.
+
+    Only the `stage` cell moves. The `role` cell — who holds the row next — is
+    still a human edit: who *presses* a transition and who *works* the next
+    station are different questions (row-status.md § ตารางการส่งต่อ), and the
+    board has no table that answers the second one yet.
+    """
+    form = form or {}
+    verdict = evaluate(
+        root, row=row, to_stage=to_stage, actor_role=actor_role, form=form
+    )
+    if not verdict["allowed"]:
+        return {"ok": False, "reason": verdict["reason"], **_blank()}
+
+    slug = task_slug(project, row["id"])
+    branch = f"worktree-{client}-{actor_role}-{slug}"
+    tree, err = _worktree(root, slug, branch)
+    if tree is None:
+        return {"ok": False, "reason": err, **_blank()}
+
+    rel = Path("projects") / project / "slices.md"
+    target = tree / rel
+    try:
+        before = target.read_text(encoding="utf-8")
+    except OSError:
+        return {"ok": False, "reason": f"อ่าน {rel} ใน worktree ไม่ได้", **_blank()}
+
+    after = set_cell(before, row["id"], "stage", to_stage)
+    if after is None:
+        return {
+            "ok": False,
+            # A row or column the file does not have is not something to create:
+            # the register is written by people, this only moves one cell of it.
+            "reason": f"ไม่พบแถว {row['id']} หรือคอลัมน์ stage ใน {rel.name}",
+            **_blank(),
+        }
+    if after == before:
+        return {"ok": False, "reason": "แถวนี้อยู่สถานีนั้นอยู่แล้ว", **_blank()}
+
+    target.write_text(after, encoding="utf-8")
+    message = commit_message(
+        project=project,
+        row=row,
+        to_stage=to_stage,
+        actor_role=actor_role,
+        office=office,
+        client=client,
+        slug=slug,
+        form=form,
+    )
+    add = _git(tree, "add", str(rel))
+    if add.returncode != 0:
+        return {"ok": False, "reason": add.stderr.strip()[:200], **_blank()}
+    done = _git(tree, "commit", "-m", message)
+    if done.returncode != 0:
+        return {"ok": False, "reason": done.stderr.strip()[:300], **_blank()}
+    head = _git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
+    return {
+        "ok": True,
+        "reason": None,
+        "branch": branch,
+        "commit": head,
+        "worktree": str(tree),
+    }
+
+
+def _blank() -> dict:
+    return {"branch": "", "commit": "", "worktree": ""}
+
+
+def commit_message(
+    *,
+    project: str,
+    row: dict,
+    to_stage: str,
+    actor_role: str,
+    office: str,
+    client: str,
+    slug: str,
+    form: dict,
+) -> str:
+    """The commit body for one transition.
+
+    The form's own words go here rather than into a cell of the table: the file
+    holds *state*, the commit holds *what happened* (ADR-0046 §SD2). A cell
+    would be overwritten next round and the reason for this round would vanish.
+    """
+    head = f"docs(slices): {row['id']} {row.get('stage') or '—'} → {to_stage}"
+    lines = [head, "", f"what: ย้ายสถานีของแถว {row['id']} ใน projects/{project}/slices.md"]
+    for key, label in (
+        ("env", "ทดสอบที่"),
+        ("risk", "ข้อควรระวัง"),
+        ("data", "ข้อมูลทดสอบ"),
+        ("release", "release"),
+        ("reason", "เหตุผล"),
+    ):
+        if (form.get(key) or "").strip():
+            lines.append(f"{label}: {form[key].strip()}")
+    lines += [
+        "",
+        "why: กดส่งต่อจากบอร์ด /work — ด่านของ control_plane/transition.py ตรวจผ่านแล้ว",
+        "ตามตารางใน team-os/ways-of-working/row-status.md § ตารางการส่งต่อ",
+        "",
+        "side-effects: เฉพาะเซลล์ stage ของแถวนี้ · คอลัมน์ role ยังเป็นการแก้ด้วยมือ",
+        "",
+        "verification: ด่านเดียวกันถูกเรียกซ้ำที่ endpoint ⇒ คำขอที่ข้าม UI ก็ไม่ผ่าน ·",
+        "no automated checks: การเปลี่ยนสถานะของแถวไม่มีเทสให้รันนอกจากตัวด่านเอง",
+        "",
+        f"Assignment: {client}/{office}/{actor_role}/{slug}",
+    ]
+    return "\n".join(lines)
+
+
+# ── telling the next station (ADR-0046 §SD3) ────────────────────────────────
+
+
+def payload(*, project: str, row: dict, to_stage: str, actor_role: str, form: dict) -> dict:
+    """What goes out when a card changes station. Shape is the contract."""
+    return {
+        "event": "card.stage_changed",
+        "task_key": row["id"],
+        "project": project,
+        "from": row.get("stage") or "",
+        "to": to_stage,
+        "actor": actor_role,
+        # Only the fields the form declares — never a whole cell of the table,
+        # which is a paragraph by nature (S41 measured 1,894 characters).
+        "handoff": {k: form[k] for k in ("env", "risk", "release", "reason") if form.get(k)},
+    }
+
+
+def notify(body: dict, url: str = "") -> dict:
+    """POST `body` to `url`. No URL configured is not an error.
+
+    Telling the next station is *passing the word on*, not part of passing the
+    work: a handoff that wrote the row has happened whether or not anyone was
+    listening (ADR-0046 §SD3).
+    """
+    target = url or os.environ.get("WORK_WEBHOOK_URL", "")
+    if not target:
+        return {"sent": False, "reason": "ไม่ได้ตั้ง URL"}
+    req = urllib.request.Request(
+        target,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as res:
+            return {"sent": 200 <= res.status < 300, "reason": "", "status": res.status}
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        # Never raised to the caller: the write already happened.
+        return {"sent": False, "reason": str(exc)[:200]}

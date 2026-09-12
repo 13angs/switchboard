@@ -92,6 +92,7 @@ from control_plane import (
     role_activity,
     state,
     terminal,
+    transition,
     workspace,
     ws_handler,
 )
@@ -1040,6 +1041,8 @@ def make_handler(repo_root: str):
             path = urlparse(self.path).path
             if path == "/session/start":
                 self._session_start(repo_root)
+            elif path == "/work/transition":
+                self._work_transition(repo_root)
             elif path == "/sessions/dismiss":
                 self._bulk_archive(repo_root, dismiss=True)
             elif path == "/sessions/undismiss":
@@ -1355,6 +1358,79 @@ def make_handler(repo_root: str):
                     "size": len(text),
                 },
             )
+
+        def _work_transition(self, repo_root: str):
+            """POST /work/transition — move one card one station (ADR-0044 §SD5).
+
+            The gate runs HERE, not in the browser. A disabled button on the
+            board is a picture of this handler's answer; a request that skips
+            the UI meets the same answer, which is the whole point of there
+            being one gate.
+            """
+            body, error = _read_json_body(self)
+            if error:
+                self._json(400, {"error": error})
+                return
+            body = body or {}
+            project = (body.get("project") or "").strip()
+            slice_id = (body.get("slice_id") or "").strip()
+            to_stage = (body.get("to_stage") or "").strip()
+            actor = (body.get("role") or "").strip()
+            if not all((project, slice_id, to_stage, actor)):
+                self._json(
+                    400,
+                    {"error": "ต้องมี project · slice_id · to_stage · role ครบทุกช่อง"},
+                )
+                return
+
+            root = Path(repo_root)
+            # The row comes from the same reader the board renders from, never
+            # from the request: a caller must not be able to describe a row as
+            # unblocked, or as having its criteria closed, and have that stand.
+            overview = workspace.workspace_overview(repo_root, use_cache=False)
+            found = next(
+                (
+                    s
+                    for p in overview["projects"]
+                    if p["name"] == project
+                    for s in p["slices"]
+                    if s["id"] == slice_id
+                ),
+                None,
+            )
+            if found is None:
+                self._json(404, {"error": f"ไม่พบแถว {slice_id} ใน {project}"})
+                return
+
+            form = body.get("form") if isinstance(body.get("form"), dict) else {}
+            office = (body.get("office") or "-").strip() or "-"
+            client = (body.get("client") or "internal").strip() or "internal"
+            result = transition.apply(
+                root,
+                project=project,
+                row=found,
+                to_stage=to_stage,
+                actor_role=actor,
+                office=office,
+                client=client,
+                form=form,
+            )
+            if not result["ok"]:
+                # 409, not 400: the request was well formed, the rules said no.
+                self._json(409, result)
+                return
+
+            workspace.invalidate_cache(repo_root)
+            result["notified"] = transition.notify(
+                transition.payload(
+                    project=project,
+                    row=found,
+                    to_stage=to_stage,
+                    actor_role=actor,
+                    form=form,
+                )
+            )
+            self._json(200, result)
 
         def _session_start(self, repo_root: str):
             """POST /session/start — spawn a fresh PTY, discover its session_id,

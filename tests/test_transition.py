@@ -266,3 +266,189 @@ def test_a_check_the_table_no_longer_declares_is_reported(tmp_path):
     assert any(
         "ตารางไม่ประกาศแล้ว" in d for d in transition.drift(_root(tmp_path, table=fewer))
     )
+
+
+# ── the write path, against a real git repo ─────────────────────────────────
+#
+# No mock of git here on purpose: this is the first thing in the board that
+# writes the register, and a fake `git` would prove that the fake works.
+
+SLICES = """---
+title: "demo — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage | part-of |
+| :-: | --- | --- | :-: | --- | :--: | :--: |
+| **T1** | ชิ้นแรก | จ. | ⬜ | ทำได้จริงว่า… | readydev | — |
+| **T2** | ชิ้นสอง | อ. | ⬜ | เกณฑ์ของ T1 | — | T1 |
+"""
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+    )
+
+
+@pytest.fixture
+def repo(tmp_path):
+    """A real workspace: git repo · the rules file · one project register."""
+    root = _root(tmp_path)
+    proj = root / "projects" / "demo"
+    proj.mkdir(parents=True)
+    (proj / "slices.md").write_text(SLICES, encoding="utf-8")
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+    return root
+
+
+def _row(**over) -> dict:
+    row = {"id": "T1", "stage": "readydev", "blocked_by": [], "criteria": None}
+    row.update(over)
+    return row
+
+
+def test_a_refused_transition_writes_nothing(repo):
+    before = (repo / "projects" / "demo" / "slices.md").read_text(encoding="utf-8")
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="qa"
+    )
+    assert out["ok"] is False
+    assert (repo / "projects" / "demo" / "slices.md").read_text(encoding="utf-8") == before
+    assert not (repo / ".claude" / "worktrees").exists()
+
+
+def test_an_allowed_transition_commits_in_the_cards_own_worktree(repo):
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is True, out["reason"]
+    assert out["branch"] == "worktree-internal-developer-demo-t1"
+    # the main checkout is untouched — Worktree-Per-Task is the mechanism here
+    assert "readydev" in (repo / "projects" / "demo" / "slices.md").read_text(
+        encoding="utf-8"
+    )
+    written = (Path(out["worktree"]) / "projects" / "demo" / "slices.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| inprogress |" in written
+
+
+def test_only_the_named_row_and_only_its_stage_cell_move(repo):
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    written = (Path(out["worktree"]) / "projects" / "demo" / "slices.md").read_text(
+        encoding="utf-8"
+    )
+    t1, t2 = [l for l in written.split("\n") if l.startswith("| **T")]
+    assert "inprogress" in t1 and "ชิ้นแรก" in t1 and "⬜" in t1
+    assert t2 == "| **T2** | ชิ้นสอง | อ. | ⬜ | เกณฑ์ของ T1 | — | T1 |"
+
+
+def test_the_commit_carries_a_well_formed_assignment_id(repo):
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=_row(),
+        to_stage="inprogress",
+        actor_role="developer",
+        office="build",
+    )
+    body = _git(Path(out["worktree"]), "log", "-1", "--pretty=%B").stdout
+    assert "Assignment: internal/build/developer/demo-t1" in body
+
+
+def test_the_form_lands_in_the_commit_not_in_a_cell(repo):
+    """ADR-0046 §SD2 — the file holds state, the commit holds what happened."""
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=_row(stage="review"),
+        to_stage="readyqa",
+        actor_role="senior-developer",
+        form={"env": "local :8787", "risk": "เปลี่ยน schema"},
+    )
+    assert out["ok"] is True, out["reason"]
+    tree = Path(out["worktree"])
+    body = _git(tree, "log", "-1", "--pretty=%B").stdout
+    assert "local :8787" in body and "เปลี่ยน schema" in body
+    written = (tree / "projects" / "demo" / "slices.md").read_text(encoding="utf-8")
+    assert "local :8787" not in written
+
+
+def test_a_second_transition_reuses_the_same_worktree_and_branch(repo):
+    """หนึ่งการ์ด = หนึ่ง branch = หนึ่ง PR (ADR-0044 §SD2)."""
+    first = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    second = transition.apply(
+        repo,
+        project="demo",
+        row=_row(stage="inprogress"),
+        to_stage="review",
+        actor_role="developer",
+    )
+    assert second["ok"] is True, second["reason"]
+    assert second["branch"] == first["branch"]
+    assert second["worktree"] == first["worktree"]
+    assert second["commit"] != first["commit"]
+    count = _git(Path(second["worktree"]), "rev-list", "--count", "HEAD").stdout.strip()
+    assert count == "3"  # seed + two transitions
+
+
+def test_a_row_the_register_does_not_have_writes_nothing(repo):
+    out = transition.apply(
+        repo, project="demo", row=_row(id="T9"), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is False and "T9" in out["reason"]
+
+
+def test_moving_to_the_station_it_is_already_in_is_refused(repo):
+    """Not an error to report as success: an empty commit would say a handoff
+    happened when nothing moved."""
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=_row(),
+        to_stage="readydev",
+        actor_role="developer",
+    )
+    assert out["ok"] is False
+
+
+# ── the notice ──────────────────────────────────────────────────────────────
+
+
+def test_the_payload_carries_the_form_fields_not_the_table_cell():
+    body = transition.payload(
+        project="demo",
+        row=_row(),
+        to_stage="inprogress",
+        actor_role="developer",
+        form={"env": "local", "risk": "ระวัง", "junk": "ไม่ควรหลุดออกไป"},
+    )
+    assert body["event"] == "card.stage_changed"
+    assert body["from"] == "readydev" and body["to"] == "inprogress"
+    assert body["handoff"] == {"env": "local", "risk": "ระวัง"}
+
+
+def test_no_webhook_url_is_not_an_error(monkeypatch):
+    """Telling the next station is passing the word on, not part of passing the
+    work (ADR-0046 §SD3)."""
+    monkeypatch.delenv("WORK_WEBHOOK_URL", raising=False)
+    assert transition.notify({"a": 1})["sent"] is False
+
+
+def test_an_unreachable_webhook_is_swallowed_not_raised(monkeypatch):
+    """The write already happened; a dead endpoint must not undo it."""
+    monkeypatch.setenv("WORK_WEBHOOK_URL", "http://127.0.0.1:9/none")
+    out = transition.notify({"a": 1})
+    assert out["sent"] is False and out["reason"]
