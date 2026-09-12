@@ -17,6 +17,18 @@
 
 const PARAM = 'actingRole';
 
+/** `roles.md § โมเดลต่อ role` writes `Senior Developer`, `DevOps`; every
+ *  permission table the transition gate reads (`row-status.md § ตารางการ
+ *  ส่งต่อ`, `roles.md § แกนความเป็นเจ้าของ`) writes `senior-developer`,
+ *  `devops`. `control_plane/workspace.py`'s own `_slug()` bridges the two for
+ *  the office lookup; this is the same bridge on the browser side — the
+ *  acting-role seat is sent to `/work/transitions` and `/work/transition` as
+ *  a slug, never as the dispatch table's display label, or every button
+ *  reads "wrong role" no matter which one is picked. */
+export function slugifyRole(label: string): string {
+  return label.trim().toLowerCase().replace(/[\s_]+/g, '-');
+}
+
 /** Reads `?actingRole=` out of a `location.search` string. Blank → nobody
  *  sworn in yet. */
 export function readActingRoleParam(search: string): string | null {
@@ -36,14 +48,16 @@ export function withActingRoleParam(search: string, role: string | null): string
   return qs ? `?${qs}` : '';
 }
 
-/** The role a picker should show as chosen: the URL value when the
- *  workspace's own 7-role table still declares it, else `null` — a role
- *  dropped from `roles.md` since the tab was bookmarked must not leave every
- *  transition button silently answering for a seat nobody holds any more. */
+/** The role a picker should show as chosen: the URL value when it is the
+ *  slug of one of the workspace's own 7 roles, else `null` — a role dropped
+ *  from `roles.md` since the tab was bookmarked must not leave every
+ *  transition button silently answering for a seat nobody holds any more.
+ *  `roles` is `dispatch.roles` verbatim (display labels); the comparison
+ *  slugifies each one rather than trusting the URL to already be a slug. */
 export function resolveActingRole(
   roles: readonly { role: string }[],
   requested: string | null,
 ): string | null {
   if (requested === null) return null;
-  return roles.some((r) => r.role === requested) ? requested : null;
+  return roles.some((r) => slugifyRole(r.role) === requested) ? requested : null;
 }
