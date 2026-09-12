@@ -209,6 +209,12 @@ export interface WorkspaceSlice {
    *  the dispatch button must stay off regardless of `column`: a row sitting
    *  in `todo` with an open blocker has not started, it *cannot* start yet. */
   blocked_by: { id: string; title: string }[];
+  /** Set when this row's `role` resolved to something different than it did
+   *  at the parent of this file's own last commit (S40) — `null` when the
+   *  role is unchanged, the row is new, or there is no prior commit to
+   *  compare against. The board announces this itself; nothing writes it
+   *  back to `slices.md`. */
+  handoff: { from: string; to: string } | null;
 }
 
 export interface WorkspaceProject {
@@ -424,6 +430,10 @@ export interface WorkspaceResponse {
   dispatch: WorkspaceDispatch;
   pipeline: WorkspacePipeline;
   register: WorkspaceRegister;
+  /** Every row across every project whose `role` just changed (S40),
+   *  flattened so the board can announce a handoff without anyone having to
+   *  open a project and scan its columns to notice one. */
+  handoffs: { project: string; id: string; title: string; from: string; to: string }[];
 }
 
 

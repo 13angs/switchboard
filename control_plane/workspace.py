@@ -96,6 +96,13 @@ class Slice:
     # print an id. Does **not** change `column` — the 8-glyph status set stays
     # closed (row-status.md § ลำดับก่อนหลัง item 1).
     blocked_by: list[dict] = field(default_factory=list)
+    # `{"from", "to"}` when this row's resolved role differs from what it
+    # resolved to at the parent of the last commit that touched this file,
+    # else `None` (S40: a role handoff is a change the board can see in the
+    # `role` cell itself — no second store needed, git history already holds
+    # the "before"). Set by `_attach_default_roles`, never by `_parse_slices`:
+    # the raw cell alone cannot say what it resolved to last time.
+    handoff: Optional[dict] = None
 
 
 def workspace_overview(
@@ -145,6 +152,11 @@ def workspace_overview(
         # is. Both ride the HEAD-cached payload because both are functions of
         # the tree, and the page joins the register to `dispatch` itself.
         "register": role_register(root, ownership),
+        # S40 — every row whose resolved `role` differs from its own last
+        # commit's, flattened across projects so the board can announce a
+        # handoff without the reader having to walk every column of every
+        # project's cards to notice one changed.
+        "handoffs": _collect_handoffs(projects),
     }
 
     if head:
@@ -217,6 +229,72 @@ def _head_sha(root: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _previous_slices_text(root: Path, slices_path: Path) -> Optional[str]:
+    """`slices_path`'s content at the parent of its own last commit, or None.
+
+    S40 needs a "before" for the handoff check without a second storage layer:
+    ADR-0029 already treats git history as the record of everything this
+    board reads, so "before" here means "at the parent of the last commit
+    that touched this file", not wall-clock time. None covers every case
+    where there is nothing to compare against — not a git checkout, the file
+    has no commits yet, or the commit that last touched it is the one that
+    created it (no parent had the file at all).
+    """
+    try:
+        rel = slices_path.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    try:
+        log = subprocess.run(
+            ["git", "log", "-1", "--format=%H", "--", rel],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    last_commit = log.stdout.strip() if log.returncode == 0 else ""
+    if not last_commit:
+        return None
+    try:
+        show = subprocess.run(
+            ["git", "show", f"{last_commit}~1:{rel}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return show.stdout if show.returncode == 0 else None
+
+
+def _collect_handoffs(projects: list[dict]) -> list[dict]:
+    """Every row across every project whose `role` just changed (S40).
+
+    Flattened here rather than left for the page to walk every column of
+    every project's cards — the whole point is that a handoff is visible
+    without anyone going looking for it.
+    """
+    out: list[dict] = []
+    for p in projects:
+        for s in p["slices"]:
+            handoff = s.get("handoff")
+            if not handoff:
+                continue
+            out.append(
+                {
+                    "project": p["name"],
+                    "id": s["id"],
+                    "title": s["title"],
+                    "from": handoff["from"],
+                    "to": handoff["to"],
+                }
+            )
+    return out
 
 
 def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
@@ -388,7 +466,15 @@ def _parse_slices(path: Path) -> list[Slice]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
+    return _parse_slices_text(text)
 
+
+def _parse_slices_text(text: str) -> list[Slice]:
+    """Same table walk as `_parse_slices`, given text instead of a path.
+
+    Split out for S40: a handoff check needs to run this same parse against a
+    `git show` snapshot of an older commit, which has no path on disk.
+    """
     raw_rows: list[tuple[str, str, str, str, str, str, str]] = []
     in_table = False
     role_col: Optional[int] = None
@@ -1026,6 +1112,12 @@ def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> N
     that row's own override when it resolves, else the project's
     `default_role` (ADR-0035 §SD3). A card's `role` is therefore always either
     a real `dispatch.roles[].role` value or `None`, never unresolved text.
+
+    Also sets each slice's `handoff` (S40): the raw cell is still on hand here
+    — and only here, before it is overwritten below — so this is the one place
+    that can resolve both "role now" and "role at the parent of this file's
+    last commit" through the same `dispatch`/`role_disciplines` map and tell
+    whether they differ.
     """
     if not dispatch.get("present"):
         for p in projects:
@@ -1035,16 +1127,33 @@ def _attach_default_roles(root: Path, projects: list[dict], dispatch: dict) -> N
         return
     role_disciplines = _parse_role_disciplines(root / "team-os" / "people" / "roles.md")
     for p in projects:
-        p["default_role"] = _default_role_for_team(
+        default_role = _default_role_for_team(
             p.get("team", ""), role_disciplines, dispatch["roles"]
         )
+        p["default_role"] = default_role
+        slices_path = root / "projects" / p["name"] / "slices.md"
+        prev_text = _previous_slices_text(root, slices_path)
+        prev_raw_by_id = (
+            {row.id: row.role for row in _parse_slices_text(prev_text)}
+            if prev_text is not None
+            else None
+        )
         for s in p["slices"]:
-            s["role"] = (
-                _default_role_for_team(
-                    s.get("role", ""), role_disciplines, dispatch["roles"]
-                )
-                or p["default_role"]
+            raw = s.get("role", "")
+            effective = (
+                _default_role_for_team(raw, role_disciplines, dispatch["roles"])
+                or default_role
             )
+            if prev_raw_by_id is not None and s["id"] in prev_raw_by_id:
+                prev_effective = (
+                    _default_role_for_team(
+                        prev_raw_by_id[s["id"]], role_disciplines, dispatch["roles"]
+                    )
+                    or default_role
+                )
+                if prev_effective and effective and prev_effective != effective:
+                    s["handoff"] = {"from": prev_effective, "to": effective}
+            s["role"] = effective
 
 
 def _strip_md(cell: str) -> str:

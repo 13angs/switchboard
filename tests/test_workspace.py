@@ -256,3 +256,108 @@ def test_file_without_a_blocked_by_column_reports_no_blockers(tmp_path):
     out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
     slices = out["projects"][0]["slices"]
     assert slices and all(s["blocked_by"] == [] for s in slices)
+
+
+# ── `role` handoff (S40) ─────────────────────────────────────────────────────
+#
+# A row's `role` cell changing value is a handoff between stations, and it
+# happens on the same file the board already reads — this checks it can spot
+# one from git history alone, no second store.
+
+from test_role_activity import ROLES_MD, SOP_MD  # noqa: E402
+
+
+def _slices_with_role(role_cell: str, note: str = "ทดสอบ") -> str:
+    return f"""---
+title: "demo — งานแบ่งเป็นชิ้น"
+client: internal
+team: dev
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | role |
+| :-: | --- | --- | :-: | --- | :-: |
+| **H1** | ส่งไม้ | จ. | ⬜ | {note} | {role_cell} |
+"""
+
+
+def _repo_for_handoff(tmp_path: Path) -> Path:
+    (tmp_path / "team-os" / "people").mkdir(parents=True)
+    (tmp_path / "team-os" / "people" / "roles.md").write_text(ROLES_MD, encoding="utf-8")
+    (tmp_path / "docs" / "sops").mkdir(parents=True)
+    (tmp_path / "docs" / "sops" / "sop-agent-orchestration.md").write_text(
+        SOP_MD, encoding="utf-8"
+    )
+    return tmp_path
+
+
+def _commit_role(repo: Path, role_cell: str, message: str, *, note: str = "ทดสอบ") -> None:
+    proj = repo / "projects" / "demo"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "slices.md").write_text(_slices_with_role(role_cell, note), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", message)
+
+
+def test_a_changed_role_cell_is_reported_as_a_handoff(tmp_path):
+    repo = _repo_for_handoff(tmp_path)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _commit_role(repo, "developer", "one")
+    _commit_role(repo, "tech-lead", "two")
+
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    h1 = [s for s in out["projects"][0]["slices"] if s["id"] == "H1"][0]
+    assert h1["handoff"] == {"from": "Developer", "to": "Tech Lead"}
+    assert out["handoffs"] == [
+        {
+            "project": "demo",
+            "id": "H1",
+            "title": "ส่งไม้",
+            "from": "Developer",
+            "to": "Tech Lead",
+        }
+    ]
+
+
+def test_an_unchanged_role_cell_reports_no_handoff(tmp_path):
+    repo = _repo_for_handoff(tmp_path)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _commit_role(repo, "developer", "one")
+    _commit_role(
+        repo, "developer", "two — unrelated edit, same role", note="แก้ note เฉย ๆ"
+    )
+
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    h1 = [s for s in out["projects"][0]["slices"] if s["id"] == "H1"][0]
+    assert h1["handoff"] is None
+    assert out["handoffs"] == []
+
+
+def test_a_brand_new_row_is_not_a_handoff(tmp_path):
+    """The row did not exist in the file's own previous commit at all — being
+    assigned an owner for the first time is not "changing hands"."""
+    repo = _repo_for_handoff(tmp_path)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _commit_role(repo, "developer", "one")
+
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    h1 = [s for s in out["projects"][0]["slices"] if s["id"] == "H1"][0]
+    assert h1["handoff"] is None
+
+
+def test_non_git_directory_reports_no_handoffs(tmp_path):
+    repo = _repo_for_handoff(tmp_path)
+    (repo / "projects" / "demo").mkdir(parents=True)
+    (repo / "projects" / "demo" / "slices.md").write_text(
+        _slices_with_role("tech-lead"), encoding="utf-8"
+    )
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    h1 = [s for s in out["projects"][0]["slices"] if s["id"] == "H1"][0]
+    assert h1["handoff"] is None
