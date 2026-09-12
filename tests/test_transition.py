@@ -519,6 +519,34 @@ def test_moving_to_the_station_it_is_already_in_is_refused(repo):
     assert out["ok"] is False
 
 
+def test_a_blocked_commit_leaves_the_worktree_clean_for_a_retry(repo):
+    """Found on first real use (2026-09-12): a `.githooks/commit-msg`-style
+    rejection left the write staged but uncommitted, and the *next* call read
+    that stray write off the same worktree as "already there" — refusing a
+    move that had, in fact, never landed. The write must roll back with the
+    failed commit, not survive it."""
+    hook = repo / ".git" / "hooks" / "commit-msg"
+    hook.write_text("#!/bin/sh\necho blocked >&2\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+
+    blocked = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert blocked["ok"] is False and "blocked" in blocked["reason"]
+
+    tree = repo / ".claude" / "worktrees" / "demo-t1"
+    assert _git(tree, "status", "--porcelain").stdout == ""
+    assert (tree / "projects" / "demo" / "slices.md").read_text(
+        encoding="utf-8"
+    ) == SLICES
+
+    hook.unlink()  # the underlying problem (e.g. a missing office) is fixed
+    retried = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert retried["ok"] is True, retried["reason"]
+
+
 # ── the notice ──────────────────────────────────────────────────────────────
 
 
