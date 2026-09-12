@@ -696,6 +696,19 @@ function ProjectBoard({
                         รอ: {blockers.map((b) => `${b.id} ${b.title}`).join(' · ')}
                       </span>
                     )}
+                    {/* The other half of S38/S39: a row with nothing holding it
+                        back reads identically to one whose blockers merely were
+                        not declared. `blocked-by` already tells you when a row
+                        cannot start; this tells you when one can — so several
+                        of them can be picked up in parallel without opening the
+                        file to check. Only on the two columns where starting is
+                        the next thing that happens: a `running` row is already
+                        being worked, and an `owner` row waits on a person, not
+                        on a sibling row. */}
+                    {blockers.length === 0 &&
+                      (col.key === 'todo' || col.key === 'next') && (
+                        <span className="ready-now">⚡ พร้อมหยิบ</span>
+                      )}
                     {(long || dispatchable) && (
                       <div className="card-foot">
                         {long && (
