@@ -19,6 +19,7 @@ Design constraints (ADR-0029):
 
 from __future__ import annotations
 
+import json
 import os
 import posixpath
 import re
@@ -75,6 +76,11 @@ STAGE_ORDER = (
     "done",
 )
 _STAGES = frozenset(STAGE_ORDER)
+
+# A row with an open PR lives on this branch prefix (`transition._BRANCH_PREFIX`,
+# ADR-0044 §SD1) — used only to filter `gh pr list` noise, never to reconstruct
+# a branch name (client/actor_role are not recoverable from a row alone).
+_TASK_BRANCH_PREFIX = "worktree-"
 
 # Which files team-os says a project should carry (ADR-0040 §SD2). Read from the
 # workspace, never mirrored here — same discipline as _scan_dispatch. Anchored on
@@ -352,6 +358,13 @@ def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
     if slots is None:
         slots = project_slots(root)
 
+    # ADR-0044 §SD6 — one `gh pr list` for the whole scan, not one per project:
+    # a row's own branch is not a function of `main`'s HEAD, so this is read
+    # fresh on every uncached computation. `_work_transition` calling
+    # `invalidate_cache()` after every successful press (server.py) is what
+    # keeps this from going stale under `workspace_overview`'s HEAD-keyed cache.
+    branches = _open_task_branches(root)
+
     found: list[dict] = []
     for child in sorted(projects_dir.iterdir()):
         if not child.is_dir():
@@ -360,6 +373,7 @@ def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
         if not slices_file.is_file():
             continue
         slices = _parse_slices(slices_file)
+        slices = _overlay_open_branches(root, child.name, slices, branches)
         owns = _frontmatter(slices_file)
         found.append(
             {
@@ -372,6 +386,113 @@ def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
             }
         )
     return found
+
+
+def _open_task_branches(root: Path) -> list[str]:
+    """head branch names of every open PR on this repo (ADR-0044 §SD6).
+
+    Read fresh every call, never cached here: a card's in-flight branch moves
+    on a push that never touches `main`, so it cannot ride the HEAD-keyed
+    cache `workspace_overview` uses for everything else — the same reasoning
+    `role_activity.py` gives for carrying no cache of its own (ADR-0039 §SD7).
+
+    Never raises: a missing `gh`, no network, or no repo at all all read the
+    same as "no open PRs" — every row then falls back to `main`, which is
+    always at least as safe as guessing at a branch that may not exist.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                "200",
+                "--json",
+                "headRefName",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0 or not out.stdout.strip():
+        return []
+    try:
+        rows = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return []
+    return [
+        ref
+        for r in rows
+        if (ref := r.get("headRefName", "")).startswith(_TASK_BRANCH_PREFIX)
+    ]
+
+
+def _show_at_branch(root: Path, branch: str, rel_path: str) -> Optional[str]:
+    """`rel_path`'s content at the tip of `branch`, or None.
+
+    Same "missing reads as nothing to show" discipline as
+    `_previous_slices_text` — a branch that is not a local ref (never fetched,
+    or already merged and swept up) is not an error, it is a row that falls
+    back to `main`.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "show", f"{branch}:{rel_path}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _overlay_open_branches(
+    root: Path, project: str, slices: list[Slice], branches: list[str]
+) -> list[Slice]:
+    """Swap in a row's own branch content while its PR is still open (ADR-0044 §SD6).
+
+    `main` only ever holds what a card looked like before its first press —
+    every commit after that lands in the card's own worktree branch
+    (ADR-0044 §SD1), so a row with an open PR must be read from
+    `git show <branch>:<path>` instead of the checkout on disk, or the board
+    (and the transition gate behind it) judges a stage `main` has not seen yet.
+
+    Matched by `transition.task_slug`'s suffix rather than a reconstructed
+    branch name: the branch's other segments (`client`, `actor_role`) are not
+    recoverable from the row alone, and are not needed — one card can only
+    ever have one open PR (ADR-0048 §SD2), so a suffix match is unambiguous.
+
+    A branch that matches but cannot be read, or no longer contains the row,
+    falls back to the `main` copy already in hand rather than dropping it.
+    """
+    if not branches:
+        return slices
+
+    from . import transition  # deferred: transition imports STAGE_ORDER from here
+
+    cache: dict[str, Optional[list[Slice]]] = {}
+    out: list[Slice] = []
+    for s in slices:
+        suffix = "-" + transition.task_slug(project, s.id)
+        branch = next((b for b in branches if b.endswith(suffix)), None)
+        if branch is None:
+            out.append(s)
+            continue
+        if branch not in cache:
+            text = _show_at_branch(root, branch, f"projects/{project}/slices.md")
+            cache[branch] = _parse_slices_text(text) if text is not None else None
+        match = next((r for r in (cache[branch] or []) if r.id == s.id), None)
+        out.append(match if match is not None else s)
+    return out
 
 
 def project_slots(root: Path) -> dict:
@@ -595,7 +716,9 @@ def _parse_slices_text(text: str) -> list[Slice]:
 
     # Second pass: resolve `blocked-by` against this file's own rows, now that
     # every row's column is knowable.
-    columns_by_id = {r["id"]: _column_for(r["status_cell"], r["note"]) for r in raw_rows}
+    columns_by_id = {
+        r["id"]: _column_for(r["status_cell"], r["note"]) for r in raw_rows
+    }
     titles_by_id = {r["id"]: r["title"] for r in raw_rows}
     criteria_by_parent = _criteria(raw_rows, columns_by_id)
 
@@ -610,7 +733,9 @@ def _parse_slices_text(text: str) -> list[Slice]:
                 column=column,
                 note=r["note"],
                 role=r["role"],
-                blocked_by=_open_blockers(r["blocked_raw"], columns_by_id, titles_by_id),
+                blocked_by=_open_blockers(
+                    r["blocked_raw"], columns_by_id, titles_by_id
+                ),
                 stage=r["stage"],
                 part_of=r["part_of"],
                 criteria=criteria_by_parent.get(r["id"]),
