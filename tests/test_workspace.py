@@ -11,6 +11,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -284,7 +285,9 @@ team: dev
 
 def _repo_for_handoff(tmp_path: Path) -> Path:
     (tmp_path / "team-os" / "people").mkdir(parents=True)
-    (tmp_path / "team-os" / "people" / "roles.md").write_text(ROLES_MD, encoding="utf-8")
+    (tmp_path / "team-os" / "people" / "roles.md").write_text(
+        ROLES_MD, encoding="utf-8"
+    )
     (tmp_path / "docs" / "sops").mkdir(parents=True)
     (tmp_path / "docs" / "sops" / "sop-agent-orchestration.md").write_text(
         SOP_MD, encoding="utf-8"
@@ -292,10 +295,14 @@ def _repo_for_handoff(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _commit_role(repo: Path, role_cell: str, message: str, *, note: str = "ทดสอบ") -> None:
+def _commit_role(
+    repo: Path, role_cell: str, message: str, *, note: str = "ทดสอบ"
+) -> None:
     proj = repo / "projects" / "demo"
     proj.mkdir(parents=True, exist_ok=True)
-    (proj / "slices.md").write_text(_slices_with_role(role_cell, note), encoding="utf-8")
+    (proj / "slices.md").write_text(
+        _slices_with_role(role_cell, note), encoding="utf-8"
+    )
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", message)
 
@@ -505,3 +512,107 @@ def test_an_open_row_still_goes_to_the_owner_column(tmp_path):
     by_id = _closed_owner(tmp_path)
     assert by_id["C2"]["column"] == "owner"  # mark in the prose cell
     assert by_id["C3"]["column"] == "owner"  # mark in the สถานะ cell
+
+
+# ── two sources: `main` vs. a card's own open-PR branch (S47, ADR-0044 §SD6) ─
+#
+# `gh` is stubbed the same way test_transition.py does it — a script on PATH
+# that answers canned JSON — because the thing worth pinning is "which branch
+# did the reader ask for", not GitHub's real answer.
+
+BRANCH_SLICES = """---
+title: "demo — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage |
+| :-: | --- | --- | :-: | --- | :-: |
+| **S1** | กำลังเดินอยู่บน branch ของตัวเอง | จ. | ⬜ | ยังไม่ merge | readydev |
+| **S2** | ยังไม่มีใครหยิบ | อ. | ⬜ | ไม่มี branch | readydev |
+"""
+
+
+def _stub_gh(tmp_path: Path, monkeypatch, *, listed: str = "[]") -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "gh").write_text(
+        '#!/bin/sh\ncase "$1 $2" in "pr list") printf %s '
+        + repr(listed)
+        + " ;; esac\nexit 0\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+
+def _repo_with_card_branch(tmp_path: Path) -> Path:
+    """`demo`'s `S1` moved to `inprogress` on its own worktree branch — `main`
+    still reads `readydev`, exactly as measured live on `S46` 2026-09-13."""
+    repo = _repo(tmp_path, slices=BRANCH_SLICES, gaps=None)
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "one")
+    _git(repo, "checkout", "-qb", "worktree-internal-developer-demo-s1")
+    text = (repo / "projects" / "demo" / "slices.md").read_text(encoding="utf-8")
+    (repo / "projects" / "demo" / "slices.md").write_text(
+        text.replace(
+            "| **S1** | กำลังเดินอยู่บน branch ของตัวเอง | จ. | ⬜ | ยังไม่ merge | readydev |",
+            "| **S1** | กำลังเดินอยู่บน branch ของตัวเอง | จ. | ⬜ | ยังไม่ merge | inprogress |",
+        ),
+        encoding="utf-8",
+    )
+    _git(repo, "commit", "-aqm", "two")
+    _git(repo, "checkout", "-q", "main")
+    return repo
+
+
+def test_a_row_with_an_open_pr_reads_its_own_branch_not_main(tmp_path, monkeypatch):
+    _stub_gh(
+        tmp_path,
+        monkeypatch,
+        listed='[{"headRefName":"worktree-internal-developer-demo-s1"}]',
+    )
+    repo = _repo_with_card_branch(tmp_path)
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["S1"]["stage"] == "inprogress"  # from the branch, not `main`
+    assert by_id["S2"]["stage"] == "readydev"  # no open PR — reads `main` as before
+
+
+def test_no_open_pr_falls_back_to_main(tmp_path, monkeypatch):
+    """The exact bug measured live: before `gh pr list` names the branch, the
+    row must still read `readydev` from `main` — never invent a stage."""
+    _stub_gh(tmp_path, monkeypatch, listed="[]")
+    repo = _repo_with_card_branch(tmp_path)
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["S1"]["stage"] == "readydev"
+
+
+def test_a_pr_open_on_an_unrelated_branch_does_not_match(tmp_path, monkeypatch):
+    """Suffix matching must not let a differently-named open PR overlay a row
+    it was never opened for."""
+    _stub_gh(
+        tmp_path,
+        monkeypatch,
+        listed='[{"headRefName":"worktree-internal-developer-other-project-s1"}]',
+    )
+    repo = _repo_with_card_branch(tmp_path)
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["S1"]["stage"] == "readydev"
+
+
+def test_missing_gh_binary_falls_back_to_main(tmp_path, monkeypatch):
+    """No `gh` on PATH is not a crash — every row reads `main`, same as before
+    ADR-0044 §SD6 landed."""
+    repo = _repo_with_card_branch(
+        tmp_path
+    )  # build the repo while git is still findable
+    monkeypatch.setenv("PATH", "")
+    out = workspace.workspace_overview(str(repo), use_cache=False)
+    by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
+    assert by_id["S1"]["stage"] == "readydev"
