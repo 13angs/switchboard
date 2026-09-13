@@ -634,6 +634,195 @@ def read_checks(tree: Path, number: int) -> dict:
     return {"ok": True, "green": True, "reason": ""}
 
 
+# ── the merge leg (S44c · ADR-0049 §SD4 · §SD5 · §SD7) ──────────────────────
+#
+# `read_checks()` above answers what GitHub says about a head that already
+# exists. This is the piece that was still missing: `deployed → done` is the
+# one press that MERGES (ADR-0044 §SD3), and the trap ADR-0049 §SD5 names is
+# that this press writes its own commit and pushes it — so the PR's head
+# changes at the press, and its rollup is `pending` at the very instant this
+# function could be asked to look. Reading it here would never see green.
+# `apply()` below reads `read_checks()` BEFORE the press's own commit exists
+# and hands the answer in as `pre_press`; this function never calls
+# `read_checks()` itself.
+#
+# What this function DOES check locally, on the commit the press itself just
+# made, is the two gates §SD5 names for that narrower job (stop-list and the
+# single-file confirmation), plus route-lint and the merge-method choice
+# §SD4/§SD7 assign to this leg. Refusing to merge is never an error (S44d):
+# the row is already written and pushed on the card's own branch either way,
+# and a refusal here just means a person merges it by hand.
+
+
+def _run_node(
+    tree: Path, script: str, *args: str
+) -> Optional[subprocess.CompletedProcess]:
+    """`node <script> <args>` in `tree`, or None if it could not even be
+    spawned (node missing, timeout) — distinct from the script running and
+    saying no."""
+    try:
+        return subprocess.run(
+            ["node", script, *args],
+            cwd=str(tree),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def _stop_list_clear(tree: Path) -> tuple[bool, str]:
+    """`tools/pr-guard/stop-list.mjs --json` against `origin/main`, run in
+    `tree` on the commit the press just made. `(clear, reason)` — exit 2 (the
+    script's own law-drift guard) is read as NOT clear, same as a hit: this
+    function must never treat "the check errored" as "the check passed"."""
+    out = _run_node(
+        tree, "tools/pr-guard/stop-list.mjs", "--base", "origin/main", "--json"
+    )
+    if out is None:
+        return False, "เรียก stop-list.mjs ไม่ได้"
+    if out.returncode == 2:
+        return False, "stop-list.mjs ผิดพลาด: " + out.stderr.strip()[:300]
+    try:
+        data = json.loads(out.stdout) if out.stdout.strip() else {}
+    except json.JSONDecodeError:
+        return False, "stop-list.mjs ตอบ JSON ที่อ่านไม่ออก"
+    hit_paths = data.get("hitPaths") or []
+    if hit_paths:
+        return False, "stop-list HIT: " + ", ".join(hit_paths[:5])
+    return True, ""
+
+
+def _route_lint_clean(tree: Path) -> tuple[bool, str]:
+    """`tools/route-lint/route-lint.mjs` against the tree that is about to be
+    merged — the same script CI runs, measured at 0.58s with no network
+    (ADR-0049 §SD5). `(clean, reason)`."""
+    out = _run_node(tree, "tools/route-lint/route-lint.mjs")
+    if out is None:
+        return False, "เรียก route-lint.mjs ไม่ได้"
+    if out.returncode != 0:
+        return False, "route-lint ไม่ผ่าน: " + (out.stderr or out.stdout).strip()[:300]
+    return True, ""
+
+
+def _touches_only(tree: Path, rel: Path) -> Optional[str]:
+    """None if the press's own commit (`HEAD` against its one parent) touches
+    exactly `rel` — the cheap half of ADR-0049 §SD5's two local gates. The
+    board composes this diff itself with `set_cell()`, but an assumption that
+    is never checked is exactly the one that breaks quietly."""
+    out = _git(tree, "diff", "--name-only", "HEAD~1", "HEAD")
+    if out.returncode != 0:
+        return "อ่าน diff ของ commit ล่าสุดไม่ได้: " + out.stderr.strip()[:200]
+    touched = [p for p in out.stdout.splitlines() if p.strip()]
+    want = str(rel).replace("\\", "/")
+    if touched != [want]:
+        shown = ", ".join(touched) if touched else "(ไม่มี)"
+        return f"commit ของการกดแตะมากกว่าไฟล์เดียว: {shown}"
+    return None
+
+
+def _assignment_verdict(tree: Path) -> dict:
+    """`tools/pr-guard/assignment.mjs --json` against `origin/main`, run in
+    `tree` on the commit the press just made — the merge-method choice
+    §SD7 hands to `merge_if_clear()`. Exit 2 (role-table drift) reads the
+    same as an unreadable answer: `mergeMethod: None`."""
+    out = _run_node(
+        tree, "tools/pr-guard/assignment.mjs", "--base", "origin/main", "--json"
+    )
+    if out is None:
+        return {
+            "verdict": None,
+            "mergeMethod": None,
+            "reason": "เรียก assignment.mjs ไม่ได้",
+        }
+    if out.returncode == 2:
+        return {
+            "verdict": None,
+            "mergeMethod": None,
+            "reason": "assignment.mjs ผิดพลาด: " + out.stderr.strip()[:300],
+        }
+    try:
+        data = json.loads(out.stdout) if out.stdout.strip() else {}
+    except json.JSONDecodeError:
+        return {
+            "verdict": None,
+            "mergeMethod": None,
+            "reason": "assignment.mjs ตอบ JSON ที่อ่านไม่ออก",
+        }
+    data.setdefault("reason", "")
+    return data
+
+
+# `assignment.mjs --json`'s `mergeMethod` values, straight to the `gh` flag
+# that means them (§SD7) — never a default the button picks on its own.
+_MERGE_FLAG = {"squash": "--squash", "merge-commit": "--merge"}
+
+
+def merge_if_clear(tree: Path, *, pr: int, rel: Path, pre_press: dict) -> dict:
+    """The 6th press's merge leg — `deployed → done` only.
+
+    `pre_press` is what `read_checks()` answered about the PR's head BEFORE
+    this press wrote its own commit (§SD5) — `apply()` reads that earlier and
+    hands it in; this function never calls `read_checks()` itself, so it can
+    never be tempted to read the (always-pending) post-push head. From there
+    it closes the two gates that answer is still missing: the commit the
+    press itself just made (stop-list · route-lint · touches-one-file, in
+    that order — first hit wins) and, only once all three are clear, the
+    merge-method choice (§SD7).
+
+    Returns `{merged, method, reason}`. `merged: False` is never raised as an
+    error — S44d is the same outcome reached a different way: the row stands
+    committed and pushed on the card's own branch, and a human merges it
+    (`gh pr merge`) once they have looked.
+    """
+    blank = {"merged": False, "method": None, "reason": ""}
+    if not pr:
+        return {**blank, "reason": "ไม่มี PR ที่เปิดอยู่ของการ์ดนี้ให้ merge"}
+    if not (pre_press.get("ok") and pre_press.get("green")):
+        return {
+            **blank,
+            "reason": pre_press.get("reason") or "อ่านผลเช็กของ head ก่อนกดไม่ได้",
+        }
+
+    clear, reason = _stop_list_clear(tree)
+    if not clear:
+        return {**blank, "reason": reason}
+
+    clean, reason = _route_lint_clean(tree)
+    if not clean:
+        return {**blank, "reason": reason}
+
+    touch_err = _touches_only(tree, rel)
+    if touch_err:
+        return {**blank, "reason": touch_err}
+
+    verdict = _assignment_verdict(tree)
+    method = verdict.get("mergeMethod")
+    if method not in _MERGE_FLAG:
+        return {
+            **blank,
+            "reason": verdict.get("reason")
+            or f"assignment verdict: {verdict.get('verdict')}",
+        }
+
+    try:
+        merged = _gh(tree, "pr", "merge", str(pr), _MERGE_FLAG[method])
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {
+            "merged": False,
+            "method": method,
+            "reason": f"เรียก gh pr merge ไม่ได้: {str(exc)[:200]}",
+        }
+    if merged.returncode != 0:
+        return {
+            "merged": False,
+            "method": method,
+            "reason": "gh pr merge ล้ม: " + merged.stderr.strip()[:300],
+        }
+    return {"merged": True, "method": method, "reason": ""}
+
+
 def apply(
     root: Path,
     *,
@@ -647,14 +836,20 @@ def apply(
 ) -> dict:
     """Run the gate, then write the row in the card's own worktree.
 
-    Returns `{ok, reason, branch, commit, worktree}`. Nothing is written unless
-    `evaluate()` allowed it — the UI's disabled button is a picture of this
-    call's answer, and a request that skips the UI meets the same gate here.
+    Returns `{ok, reason, branch, commit, worktree, published, merge}`.
+    Nothing is written unless `evaluate()` allowed it — the UI's disabled
+    button is a picture of this call's answer, and a request that skips the
+    UI meets the same gate here.
 
     Only the `stage` cell moves. The `role` cell — who holds the row next — is
     still a human edit: who *presses* a transition and who *works* the next
     station are different questions (row-status.md § ตารางการส่งต่อ), and the
     board has no table that answers the second one yet.
+
+    `deployed → done` is the one press that also merges (ADR-0044 §SD3):
+    `merge["merged"]` says whether it did, and when it did not, `merge
+    ["reason"]` says why — never an error, because the write above still
+    happened either way (S44d).
     """
     form = form or {}
     verdict = evaluate(
@@ -663,11 +858,33 @@ def apply(
     if not verdict["allowed"]:
         return {"ok": False, "reason": verdict["reason"], **_blank()}
 
+    is_merge_station = row.get("stage") == "deployed" and to_stage == "done"
+
     slug = task_slug(project, row["id"])
     branch = f"worktree-{client}-{actor_role}-{slug}"
     tree, err = _worktree(root, slug, branch)
     if tree is None:
         return {"ok": False, "reason": err, **_blank()}
+
+    # ADR-0049 §SD5's trap: this press is about to write its own commit and
+    # push it, which makes the PR's head — and its rollup — change. Reading
+    # `read_checks()` after that would see `pending` every single time. The
+    # only honest moment to read it is right now, before a single byte of
+    # this press exists, off whatever PR is open on the card's branch today.
+    pre_press: Optional[dict] = None
+    pr_before = 0
+    if is_merge_station:
+        found = _open_pr(tree, branch)
+        pr_before = found.get("number", 0) if found else 0
+        pre_press = (
+            read_checks(tree, pr_before)
+            if found
+            else {
+                "ok": False,
+                "green": False,
+                "reason": "ยังไม่มี PR เปิดอยู่ของการ์ดนี้",
+            }
+        )
 
     rel = Path("projects") / project / "slices.md"
     target = tree / rel
@@ -727,6 +944,17 @@ def apply(
         title=message.split("\n", 1)[0],
         body=pr_body(project=project, row=row, branch=branch),
     )
+    merge = {"merged": False, "method": None, "reason": ""}
+    if is_merge_station:
+        # `published["pr"]` is 0 when this press's own push failed — fall back
+        # to the PR found before the press, since a push failure does not mean
+        # the PR stopped existing.
+        merge = merge_if_clear(
+            tree,
+            pr=published.get("pr") or pr_before,
+            rel=rel,
+            pre_press=pre_press or {},
+        )
     return {
         "ok": True,
         "reason": None,
@@ -734,6 +962,7 @@ def apply(
         "commit": head,
         "worktree": str(tree),
         "published": published,
+        "merge": merge,
     }
 
 
@@ -742,9 +971,11 @@ def _blank() -> dict:
         "branch": "",
         "commit": "",
         "worktree": "",
-        # Same keys in every answer: a caller that reads `published` off a
-        # refused press gets "nothing was published", not a KeyError.
+        # Same keys in every answer: a caller that reads `published` (or
+        # `merge`) off a refused press gets "nothing happened", not a
+        # KeyError.
         "published": {"pushed": False, "pr": 0, "url": "", "reason": ""},
+        "merge": {"merged": False, "method": None, "reason": ""},
     }
 
 
