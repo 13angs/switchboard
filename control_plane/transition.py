@@ -518,6 +518,122 @@ def pr_body(*, project: str, row: dict, branch: str) -> str:
     )
 
 
+# ── the check-reading leg (S44b · ADR-0049) ─────────────────────────────────
+#
+# A separate function from whoever presses (`apply()`/the still-unwritten
+# merge leg of S44c): this only reads GitHub's answer and judges it, it never
+# writes anything. Same `_gh()` as the publish leg above — no new credential
+# (ADR-0049 §SD1).
+#
+# ADR-0049 §SD2: green comes from `statusCheckRollup` ITSELF, never from
+# `mergeStateStatus` — this repo has no branch protection, so a red PR still
+# answers `UNSTABLE`, not `BLOCKED`; `mergeStateStatus` is answering a
+# different question than the one the rule asks. The one value of it this
+# function still reads is `DIRTY` (a real merge conflict), which stops on its
+# own regardless of the rollup.
+#
+# §SD3: a check name this function does not recognise is a stop, not a pass —
+# renaming a job in pr-check.yml must widen the gate, never narrow it
+# silently (risks.md S-01, ninth surface). `assignment` red is the one
+# exception: §SD3/§SD7 read it as "pick merge commit over squash", not as a
+# reason to stop — that choice is `S44a`/`S44c`'s job, not this one's.
+
+# Exact job names from .github/workflows/pr-check.yml + the GitHub App check
+# that is not a job in that file. A name outside this set is unknown (§SD3).
+_KNOWN_CHECKS = frozenset(
+    {
+        "route-lint (links, orphans, model-id drift)",
+        "stop-list (does this need the owner?)",
+        "assignment (one id per PR, merge method)",
+        "GitGuardian Security Checks",
+    }
+)
+
+# Red here selects a merge method (§SD7) — it never stops the merge by itself.
+_NON_STOPPING_CHECKS = frozenset({"assignment (one id per PR, merge method)"})
+
+_GREEN_CONCLUSIONS = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
+
+
+def read_checks(tree: Path, number: int) -> dict:
+    """What GitHub's checks say about PR `number`'s current head.
+
+    Call this on the head the card carries IN, before any commit this module's
+    own press would add — `apply()`/`publish()` push a new commit, which makes
+    the rollup of the new head `pending` at the instant of the press (§SD5);
+    reading straight after a press would never see green. That ordering is the
+    caller's job, not this function's.
+
+    Returns `{ok, green, reason}`. `reason` never says the bare "เช็กไม่ผ่าน" —
+    it names the one check (or condition) that decided the answer, because
+    §SD3 gives every red a different meaning and a caller that only sees
+    "failed" cannot act on it.
+
+    `ok` is False when the read itself did not produce a judgeable answer (`gh`
+    failed, no such PR, unreadable JSON) — treated the same as a stop (§SD6):
+    the caller never merges on `ok: False`, whatever `green` says.
+    """
+    try:
+        out = _gh(
+            tree,
+            "pr",
+            "view",
+            str(number),
+            "--json",
+            "state,mergeStateStatus,statusCheckRollup",
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {
+            "ok": False,
+            "green": False,
+            "reason": f"เรียก gh ไม่ได้: {str(exc)[:200]}",
+        }
+    if out.returncode != 0:
+        return {
+            "ok": False,
+            "green": False,
+            "reason": "gh pr view ล้ม: " + out.stderr.strip()[:200],
+        }
+    try:
+        data = json.loads(out.stdout) if out.stdout.strip() else {}
+    except json.JSONDecodeError:
+        return {"ok": False, "green": False, "reason": "gh ตอบ JSON ที่อ่านไม่ออก"}
+
+    # DIRTY = ชนกับ base จริง — หยุดไม่ว่ารายการเช็กจะว่างหรือเขียวแค่ไหน (§SD2)
+    if data.get("mergeStateStatus") == "DIRTY":
+        return {
+            "ok": True,
+            "green": False,
+            "reason": "mergeStateStatus: DIRTY — branch ชนกับ main",
+        }
+
+    rollup = data.get("statusCheckRollup") or []
+    if not rollup:
+        # ว่าง = pr-check.yml ยังไม่วิ่ง หรือวิ่งไม่จบ — คือ "ไม่รู้" ไม่ใช่ "เขียว" (§SD2)
+        return {
+            "ok": True,
+            "green": False,
+            "reason": "statusCheckRollup ว่าง — ไม่รู้ ไม่ใช่เขียว",
+        }
+
+    for check in rollup:
+        name = check.get("name") or "(ไม่มีชื่อ)"
+        if name not in _KNOWN_CHECKS:
+            return {"ok": True, "green": False, "reason": f"เช็กที่ไม่รู้จัก: {name}"}
+        if name in _NON_STOPPING_CHECKS:
+            continue
+        status = check.get("status")
+        conclusion = check.get("conclusion")
+        if status != "COMPLETED" or conclusion not in _GREEN_CONCLUSIONS:
+            return {
+                "ok": True,
+                "green": False,
+                "reason": f"{name}: {conclusion or status or 'ไม่มีผล'}",
+            }
+
+    return {"ok": True, "green": True, "reason": ""}
+
+
 def apply(
     root: Path,
     *,
