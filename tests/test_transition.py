@@ -664,6 +664,52 @@ def test_a_second_press_grows_the_same_pr_instead_of_opening_another(
     assert second["branch"] == first["branch"]
 
 
+def test_a_second_press_by_a_different_role_still_pushes_to_the_first_branch(
+    remote, repo, tmp_path, monkeypatch
+):
+    """row-status.md hands a card to a DIFFERENT role at nearly every
+    station (`developer` → `senior-developer` → `qa` → `devops` →
+    `product-owner`) — normal operation, not an edge case. The worktree is
+    keyed by row id only (`task_slug`), so a second press must keep using the
+    branch its FIRST press already created, never recompute one from the
+    CURRENT press's role.
+
+    Found 2026-09-13 walking a real card through every station on the live
+    board: recomputing the branch from `actor_role` on every press left the
+    second role's commit sitting unpushed — `git commit` lands on whatever
+    the worktree is actually checked out on, but `publish()` then tried to
+    push under a branch name that was never created, and reported the
+    failure rather than raising it, so nothing surfaced until the PR was
+    read and a commit was missing from it.
+    """
+    log = _stub_gh(
+        tmp_path,
+        monkeypatch,
+        listed='[{"number":77,"url":"https://github.com/o/r/pull/77"}]',
+    )
+    first = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    second = transition.apply(
+        repo,
+        project="demo",
+        row=_row(stage="inprogress"),
+        to_stage="review",
+        actor_role="senior-developer",
+    )
+    assert first["ok"] is True, first["reason"]
+    assert second["ok"] is True, second["reason"]
+    assert second["branch"] == first["branch"]
+    assert second["published"]["pushed"] is True, second["published"]["reason"]
+    # both commits really made it to the remote, on that ONE branch
+    assert (
+        _git(remote, "rev-parse", first["branch"]).stdout.strip()
+        == _git(Path(second["worktree"]), "rev-parse", "HEAD").stdout.strip()
+    )
+    remote_subjects = _git(remote, "log", "--format=%s", first["branch"]).stdout
+    assert "inprogress" in remote_subjects and "review" in remote_subjects
+
+
 def test_a_push_that_fails_reports_but_does_not_undo_the_commit(
     repo, tmp_path, monkeypatch
 ):
@@ -924,7 +970,9 @@ def _fake_tool(
 
 
 def _clear_stop_list(tree: Path) -> None:
-    _fake_tool(tree, "tools/pr-guard/stop-list.mjs", stdout=_json.dumps({"hitPaths": []}))
+    _fake_tool(
+        tree, "tools/pr-guard/stop-list.mjs", stdout=_json.dumps({"hitPaths": []})
+    )
 
 
 def _clean_route_lint(tree: Path) -> None:
@@ -951,9 +999,7 @@ def _stub_gh_merge(tmp_path, monkeypatch, *, exit_code: int = 0) -> Path:
     log = tmp_path / "gh-merge-argv.log"
     log.write_text("", encoding="utf-8")
     (bin_dir / "gh").write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
-        f"exit {exit_code}\n",
+        "#!/bin/sh\n" f'printf "%s\\n" "$*" >> {log}\n' f"exit {exit_code}\n",
         encoding="utf-8",
     )
     (bin_dir / "gh").chmod(0o755)
@@ -1143,7 +1189,9 @@ def test_gh_pr_merge_failing_is_reported_with_the_method_it_tried(
 # ── wired into `apply()` at `deployed → done` ───────────────────────────────
 
 
-def _stub_gh_sixth_press(tmp_path, monkeypatch, *, view_body: str, merge_exit: int = 0) -> Path:
+def _stub_gh_sixth_press(
+    tmp_path, monkeypatch, *, view_body: str, merge_exit: int = 0
+) -> Path:
     """A `gh` stub covering every subcommand the 6th press uses: `pr list`
     (the PR already open on the card's branch), `pr view` (§SD5's pre-press
     read), `pr merge`."""

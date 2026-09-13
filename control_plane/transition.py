@@ -340,16 +340,37 @@ def set_cell(text: str, row_id: str, column: str, value: str) -> Optional[str]:
     return None
 
 
-def _worktree(root: Path, slug: str, branch: str) -> tuple[Optional[Path], str]:
-    """The card's worktree, created on first use. `(path, error)`."""
+def _worktree(root: Path, slug: str, branch: str) -> tuple[Optional[Path], str, str]:
+    """The card's worktree, created on first use. `(path, branch, error)`.
+
+    `branch` in the return value is the name ACTUALLY checked out in that
+    worktree — not necessarily the `branch` argument. row-status.md's own
+    table hands a card to a different role at nearly every station
+    (`developer` → `senior-developer` → `qa` → `devops` → `product-owner`,
+    normal operation, not an edge case), and the `branch` argument is built
+    from the CURRENT press's role — so on every press after the first, it
+    names a branch that was never created. Recomputing it blindly (the bug
+    this fixes, found 2026-09-13 walking a real card through every station)
+    left a real commit sitting unpushed: `_git(tree, "commit", ...)` commits
+    onto whatever the worktree is actually on, but `publish()` would then try
+    to push under the wrong name and fail with "src refspec ... does not
+    match any" — reported, never fatal, so nothing surfaced until someone
+    read the PR and found a commit missing. The fix: once the worktree
+    exists, ask git what it is actually on, and use THAT for everything
+    downstream (`publish()`, the merge leg's `_open_pr()`) — never re-derive
+    it from `actor_role` again.
+    """
     path = root.joinpath(*_WORKTREE_DIR, slug)
     if path.exists():
-        return path, ""
+        current = _git(path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not current or current == "HEAD":
+            return None, "", f"อ่าน branch ปัจจุบันของ worktree ไม่ได้: {path}"
+        return path, current, ""
     path.parent.mkdir(parents=True, exist_ok=True)
     made = _git(root, "worktree", "add", "-B", branch, str(path))
     if made.returncode != 0:
-        return None, f"เปิด worktree ไม่ได้: {made.stderr.strip()[:200]}"
-    return path, ""
+        return None, "", f"เปิด worktree ไม่ได้: {made.stderr.strip()[:200]}"
+    return path, branch, ""
 
 
 # ── the publish leg (ADR-0048) ──────────────────────────────────────────────
@@ -861,8 +882,10 @@ def apply(
     is_merge_station = row.get("stage") == "deployed" and to_stage == "done"
 
     slug = task_slug(project, row["id"])
-    branch = f"worktree-{client}-{actor_role}-{slug}"
-    tree, err = _worktree(root, slug, branch)
+    # Only a NEW worktree is named from this press's own role — an existing
+    # one keeps whichever branch its first press already picked (see
+    # `_worktree()`'s docstring for why re-deriving it here was the bug).
+    tree, branch, err = _worktree(root, slug, f"worktree-{client}-{actor_role}-{slug}")
     if tree is None:
         return {"ok": False, "reason": err, **_blank()}
 
