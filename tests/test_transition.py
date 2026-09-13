@@ -892,3 +892,374 @@ def test_gh_failing_outright_is_not_ok_and_is_not_read_as_green(tmp_path, monkey
     out = transition.read_checks(tmp_path, 1)
     assert out["ok"] is False
     assert out["green"] is False
+
+
+# ── the merge leg (S44c · ADR-0049 §SD4 · §SD5 · §SD7) ──────────────────────
+#
+# `merge_if_clear()` never calls `read_checks()` itself — it is handed
+# `pre_press` (what `apply()` read about the PR's head BEFORE the press's own
+# commit, §SD5) and only judges the commit the press itself just made:
+# stop-list -> route-lint -> touches-one-file, in that order, first hit wins,
+# then the merge-method choice from `assignment.mjs` (§SD7). The three
+# `tools/**` scripts are faked as tiny real `.mjs` files run by a real
+# `node` — the same discipline this file already takes with `git`: a faked
+# `node` binary would prove the fake works, not the wiring.
+
+_REL = Path("projects/demo/slices.md")
+_GREEN_PRE_PRESS = {"ok": True, "green": True, "reason": ""}
+
+
+def _fake_tool(
+    tree: Path, rel: str, *, stdout: str = "", stderr: str = "", exit_code: int = 0
+) -> None:
+    path = tree / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = ""
+    if stdout:
+        body += f"process.stdout.write({_json.dumps(stdout)});\n"
+    if stderr:
+        body += f"process.stderr.write({_json.dumps(stderr)});\n"
+    body += f"process.exit({exit_code});\n"
+    path.write_text(body, encoding="utf-8")
+
+
+def _clear_stop_list(tree: Path) -> None:
+    _fake_tool(tree, "tools/pr-guard/stop-list.mjs", stdout=_json.dumps({"hitPaths": []}))
+
+
+def _clean_route_lint(tree: Path) -> None:
+    _fake_tool(tree, "tools/route-lint/route-lint.mjs", exit_code=0)
+
+
+def _assignment_says(tree: Path, verdict: str, method) -> None:
+    _fake_tool(
+        tree,
+        "tools/pr-guard/assignment.mjs",
+        stdout=_json.dumps({"verdict": verdict, "mergeMethod": method}),
+    )
+
+
+def _stub_gh_merge(tmp_path, monkeypatch, *, exit_code: int = 0) -> Path:
+    """A `gh` on PATH whose `pr merge` records its argv and exits `exit_code`.
+
+    The log is touched empty up front: a test asserting the merge leg
+    short-circuited before ever calling `gh` needs to read "nothing was
+    logged", not get a FileNotFoundError for the log never being created.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "gh-merge-argv.log"
+    log.write_text("", encoding="utf-8")
+    (bin_dir / "gh").write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    return log
+
+
+@pytest.fixture
+def merge_tree(tmp_path):
+    """A real git repo whose HEAD is the "press's own commit" — two commits,
+    the second touching only `projects/demo/slices.md`."""
+    root = tmp_path / "tree"
+    root.mkdir()
+    (root / "projects" / "demo").mkdir(parents=True)
+    (root / "projects" / "demo" / "slices.md").write_text("first\n", encoding="utf-8")
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+    (root / "projects" / "demo" / "slices.md").write_text("second\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "press commit")
+    return root
+
+
+def test_merges_with_squash_when_assignment_says_one_id(
+    merge_tree, tmp_path, monkeypatch
+):
+    _clear_stop_list(merge_tree)
+    _clean_route_lint(merge_tree)
+    _assignment_says(merge_tree, "ok", "squash")
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out == {"merged": True, "method": "squash", "reason": ""}
+    assert "pr merge 42 --squash" in log.read_text(encoding="utf-8")
+
+
+def test_merges_with_merge_commit_when_assignment_says_multi_id(
+    merge_tree, tmp_path, monkeypatch
+):
+    """§SD7 — the card that carries >1 `Assignment:` id must never be
+    squashed (PR #1120 · #1124 lost work permanently that way)."""
+    _clear_stop_list(merge_tree)
+    _clean_route_lint(merge_tree)
+    _assignment_says(merge_tree, "multi-id", "merge-commit")
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out == {"merged": True, "method": "merge-commit", "reason": ""}
+    assert "pr merge 42 --merge" in log.read_text(encoding="utf-8")
+
+
+def test_no_open_pr_stops_before_anything_runs(merge_tree, tmp_path, monkeypatch):
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=0, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out["merged"] is False
+    assert "ไม่มี PR" in out["reason"]
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_a_head_that_was_not_green_before_the_press_stops_the_merge(
+    merge_tree, tmp_path, monkeypatch
+):
+    """§SD5 — this function never re-derives the answer; it trusts what it
+    was handed about the head that existed before this press's own commit."""
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree,
+        pr=42,
+        rel=_REL,
+        pre_press={
+            "ok": True,
+            "green": False,
+            "reason": "stop-list (does this need the owner?): FAILURE",
+        },
+    )
+    assert out["merged"] is False
+    assert out["reason"] == "stop-list (does this need the owner?): FAILURE"
+    assert log.read_text(encoding="utf-8") == ""  # never reached `gh pr merge`
+
+
+def test_a_stop_list_hit_on_the_press_own_commit_stops_the_merge(
+    merge_tree, tmp_path, monkeypatch
+):
+    _fake_tool(
+        merge_tree,
+        "tools/pr-guard/stop-list.mjs",
+        stdout=_json.dumps({"hitPaths": ["CLAUDE.md"]}),
+    )
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out["merged"] is False
+    assert "CLAUDE.md" in out["reason"]
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_a_route_lint_failure_stops_the_merge(merge_tree, tmp_path, monkeypatch):
+    _clear_stop_list(merge_tree)
+    _fake_tool(
+        merge_tree,
+        "tools/route-lint/route-lint.mjs",
+        stderr="route-lint FAIL — 1 broken link",
+        exit_code=1,
+    )
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out["merged"] is False
+    assert "route-lint" in out["reason"]
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_a_commit_touching_more_than_the_row_file_stops_the_merge(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "tree"
+    root.mkdir()
+    (root / "projects" / "demo").mkdir(parents=True)
+    (root / "projects" / "demo" / "slices.md").write_text("first\n", encoding="utf-8")
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+    (root / "projects" / "demo" / "slices.md").write_text("second\n", encoding="utf-8")
+    (root / "stray.txt").write_text("oops\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "press commit touching two files")
+    _clear_stop_list(root)
+    _clean_route_lint(root)
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(root, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS)
+    assert out["merged"] is False
+    assert "stray.txt" in out["reason"]
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_assignment_unable_to_pick_a_method_stops_the_merge(
+    merge_tree, tmp_path, monkeypatch
+):
+    _clear_stop_list(merge_tree)
+    _clean_route_lint(merge_tree)
+    _fake_tool(
+        merge_tree,
+        "tools/pr-guard/assignment.mjs",
+        stdout=_json.dumps(
+            {
+                "verdict": "malformed-commits",
+                "mergeMethod": None,
+                "reason": "commit 1 missing-trailer",
+            }
+        ),
+    )
+    log = _stub_gh_merge(tmp_path, monkeypatch)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out["merged"] is False
+    assert "missing-trailer" in out["reason"]
+    assert log.read_text(encoding="utf-8") == ""
+
+
+def test_gh_pr_merge_failing_is_reported_with_the_method_it_tried(
+    merge_tree, tmp_path, monkeypatch
+):
+    _clear_stop_list(merge_tree)
+    _clean_route_lint(merge_tree)
+    _assignment_says(merge_tree, "ok", "squash")
+    log = _stub_gh_merge(tmp_path, monkeypatch, exit_code=1)
+    out = transition.merge_if_clear(
+        merge_tree, pr=42, rel=_REL, pre_press=_GREEN_PRE_PRESS
+    )
+    assert out["merged"] is False
+    assert out["method"] == "squash"
+    assert "pr merge 42 --squash" in log.read_text(encoding="utf-8")
+
+
+# ── wired into `apply()` at `deployed → done` ───────────────────────────────
+
+
+def _stub_gh_sixth_press(tmp_path, monkeypatch, *, view_body: str, merge_exit: int = 0) -> Path:
+    """A `gh` stub covering every subcommand the 6th press uses: `pr list`
+    (the PR already open on the card's branch), `pr view` (§SD5's pre-press
+    read), `pr merge`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "gh-argv.log"
+    log.write_text("", encoding="utf-8")
+    (bin_dir / "gh").write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        'case "$1 $2" in\n'
+        '  "pr list") printf %s \'[{"number":90,"url":"https://github.com/o/r/pull/90"}]\' ;;\n'
+        f'  "pr view") printf %s {view_body!r} ;;\n'
+        f'  "pr merge") exit {merge_exit} ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    return log
+
+
+def test_the_sixth_press_merges_end_to_end(remote, repo, tmp_path, monkeypatch):
+    """`deployed → done`, criteria closed, every local gate clear — the one
+    press that also merges (ADR-0044 §SD3), reading the PR's head before its
+    own commit exists (§SD5) and choosing the method `assignment.mjs` names
+    (§SD7)."""
+    _clear_stop_list(repo)
+    _clean_route_lint(repo)
+    _assignment_says(repo, "ok", "squash")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "seed fake pr-guard tools for the test")
+
+    body = {
+        "state": "OPEN",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": _FOUR_GREEN,
+    }
+    log = _stub_gh_sixth_press(tmp_path, monkeypatch, view_body=_json.dumps(body))
+
+    row = _row(stage="deployed", criteria={"done": 2, "total": 2})
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=row,
+        to_stage="done",
+        actor_role="product-owner",
+        office="build",
+        client="internal",
+    )
+    assert out["ok"] is True, out["reason"]
+    assert out["merge"] == {"merged": True, "method": "squash", "reason": ""}
+    argv = log.read_text(encoding="utf-8")
+    assert "view 90" in argv
+    assert "merge 90 --squash" in argv
+
+
+def test_the_sixth_press_stops_when_the_pre_press_head_is_not_green(
+    remote, repo, tmp_path, monkeypatch
+):
+    """A card whose head was already red before this press writes and pushes
+    its cell anyway (S44d) — the merge just does not happen, and it is not an
+    error."""
+    _clear_stop_list(repo)
+    _clean_route_lint(repo)
+    _assignment_says(repo, "ok", "squash")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "seed fake pr-guard tools for the test")
+
+    rows = [dict(r) for r in _FOUR_GREEN]
+    for r in rows:
+        if r["name"] == "stop-list (does this need the owner?)":
+            r["conclusion"] = "FAILURE"
+    body = {"state": "OPEN", "mergeStateStatus": "UNSTABLE", "statusCheckRollup": rows}
+    log = _stub_gh_sixth_press(tmp_path, monkeypatch, view_body=_json.dumps(body))
+
+    row = _row(stage="deployed", criteria={"done": 2, "total": 2})
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=row,
+        to_stage="done",
+        actor_role="product-owner",
+        office="build",
+        client="internal",
+    )
+    assert out["ok"] is True, out["reason"]  # the write still happened
+    assert out["merge"]["merged"] is False
+    assert "stop-list" in out["merge"]["reason"]
+    assert "merge 90" not in log.read_text(encoding="utf-8")
+
+
+def test_a_non_merge_station_press_never_touches_the_merge_leg(
+    remote, repo, tmp_path, monkeypatch
+):
+    """`readydev → inprogress` is not `deployed → done` — `merge` comes back
+    blank and no `gh pr merge` (or any `tools/**` script) is ever invoked."""
+    log = _stub_gh(tmp_path, monkeypatch, created="https://github.com/o/r/pull/77")
+    out = transition.apply(
+        repo, project="demo", row=_row(), to_stage="inprogress", actor_role="developer"
+    )
+    assert out["ok"] is True
+    assert out["merge"] == {"merged": False, "method": None, "reason": ""}
+    assert "pr merge" not in log.read_text(encoding="utf-8")
+
+
+def test_a_refused_merge_station_press_still_answers_the_merge_shape(repo):
+    """The gate (criteria not closed) refuses before any of this runs — the
+    caller still gets the same keys, never a KeyError."""
+    out = transition.apply(
+        repo,
+        project="demo",
+        row=_row(stage="deployed", criteria={"done": 0, "total": 2}),
+        to_stage="done",
+        actor_role="product-owner",
+    )
+    assert out["ok"] is False
+    assert out["merge"] == {"merged": False, "method": None, "reason": ""}
