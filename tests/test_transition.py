@@ -737,3 +737,158 @@ def test_the_pr_body_names_the_card_and_the_branch_it_grows_on():
     assert "**T1**" in body and "projects/demo/slices.md" in body
     assert "worktree-internal-developer-demo-t1" in body
     assert "merge commit" in body  # the >1-id warning pr-check will echo
+
+
+# ── the check-reading leg (S44b · ADR-0049) ─────────────────────────────────
+#
+# `read_checks` never pushes or creates anything, so these tests only need a
+# `gh` stub that answers `pr view` — no bare repo, no `apply()`. The four rows
+# below are the exact job names pr-check.yml emits (verified 2026-09-13
+# against the two real PRs `S44b`'s row cites — my-projects#1381/#1382).
+
+import json as _json  # noqa: E402
+
+
+def _stub_gh_view(tmp_path, monkeypatch, *, viewed: str, exit_code: int = 0) -> Path:
+    """A `gh` on PATH whose `pr view` answers canned JSON (or fails)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "gh-argv.log"
+    (bin_dir / "gh").write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        'case "$1 $2" in\n'
+        f'  "pr view") printf %s {viewed!r}; exit {exit_code} ;;\n'
+        "esac\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    return log
+
+
+_FOUR_GREEN = [
+    {"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"}
+    for n in (
+        "route-lint (links, orphans, model-id drift)",
+        "stop-list (does this need the owner?)",
+        "assignment (one id per PR, merge method)",
+        "GitGuardian Security Checks",
+    )
+]
+
+
+def test_four_green_rows_reads_green(tmp_path, monkeypatch):
+    """my-projects#1381 shape: all four known checks COMPLETED/SUCCESS,
+    `mergeStateStatus: CLEAN` — the criterion S44b names by number."""
+    body = {
+        "state": "OPEN",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": _FOUR_GREEN,
+    }
+    log = _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1381)
+    assert out == {"ok": True, "green": True, "reason": ""}
+    assert "view 1381" in log.read_text(encoding="utf-8")
+    assert "statusCheckRollup" in log.read_text(encoding="utf-8")
+
+
+def test_a_red_known_check_names_itself_not_a_generic_failure(tmp_path, monkeypatch):
+    """my-projects#1382 shape: `stop-list` FAILURE, the other three SUCCESS,
+    and GitHub answers `mergeStateStatus: UNSTABLE` — not `BLOCKED` — because
+    this repo has no branch protection (the exact evidence ADR-0049 §SD2
+    stands on). The stop must name `stop-list`, not say "เช็กไม่ผ่าน"."""
+    rows = [dict(r) for r in _FOUR_GREEN]
+    for r in rows:
+        if r["name"] == "stop-list (does this need the owner?)":
+            r["conclusion"] = "FAILURE"
+    body = {
+        "state": "OPEN",
+        "mergeStateStatus": "UNSTABLE",
+        "statusCheckRollup": rows,
+    }
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1382)
+    assert out["ok"] is True
+    assert out["green"] is False
+    assert "stop-list" in out["reason"]
+    assert "FAILURE" in out["reason"]
+    assert out["reason"] != "เช็กไม่ผ่าน"
+
+
+def test_unstable_merge_state_is_not_read_as_a_stop_by_itself(tmp_path, monkeypatch):
+    """§SD2 in one assertion: a green rollup under `mergeStateStatus: UNSTABLE`
+    is still green — `UNSTABLE` answers "can GitHub merge this", not "did the
+    checks pass", and this repo has no required check to make them the same
+    question."""
+    body = {
+        "state": "OPEN",
+        "mergeStateStatus": "UNSTABLE",
+        "statusCheckRollup": _FOUR_GREEN,
+    }
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1)
+    assert out == {"ok": True, "green": True, "reason": ""}
+
+
+def test_assignment_red_alone_does_not_stop(tmp_path, monkeypatch):
+    """§SD3/§SD7 — `assignment` red means "merge with `--merge`, not
+    `--squash`", never "stop"."""
+    rows = [dict(r) for r in _FOUR_GREEN]
+    for r in rows:
+        if r["name"] == "assignment (one id per PR, merge method)":
+            r["conclusion"] = "FAILURE"
+    body = {"state": "OPEN", "mergeStateStatus": "CLEAN", "statusCheckRollup": rows}
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1)
+    assert out == {"ok": True, "green": True, "reason": ""}
+
+
+def test_dirty_merge_state_stops_even_with_a_green_rollup(tmp_path, monkeypatch):
+    """§SD2 — `DIRTY` is the one value of `mergeStateStatus` this function
+    still reads, because it is a real conflict, not a check."""
+    body = {
+        "state": "OPEN",
+        "mergeStateStatus": "DIRTY",
+        "statusCheckRollup": _FOUR_GREEN,
+    }
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1)
+    assert out["ok"] is True
+    assert out["green"] is False
+    assert "DIRTY" in out["reason"]
+
+
+def test_empty_rollup_is_not_green(tmp_path, monkeypatch):
+    """§SD2 — `pr-check.yml` runs on every `pull_request` here, so an empty
+    rollup means the workflow has not finished, not that there is nothing to
+    check. Not-known is not green."""
+    body = {"state": "OPEN", "mergeStateStatus": "CLEAN", "statusCheckRollup": []}
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1)
+    assert out["ok"] is True
+    assert out["green"] is False
+    assert "ว่าง" in out["reason"]
+
+
+def test_an_unknown_check_name_stops_and_is_named(tmp_path, monkeypatch):
+    """§SD3 — a job the board has never heard of is a stop, not a pass; the
+    reason names it so a reader knows what changed."""
+    rows = [dict(r) for r in _FOUR_GREEN]
+    rows.append(
+        {"name": "new-security-scan", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    )
+    body = {"state": "OPEN", "mergeStateStatus": "CLEAN", "statusCheckRollup": rows}
+    _stub_gh_view(tmp_path, monkeypatch, viewed=_json.dumps(body))
+    out = transition.read_checks(tmp_path, 1)
+    assert out["ok"] is True
+    assert out["green"] is False
+    assert "new-security-scan" in out["reason"]
+
+
+def test_gh_failing_outright_is_not_ok_and_is_not_read_as_green(tmp_path, monkeypatch):
+    _stub_gh_view(tmp_path, monkeypatch, viewed="", exit_code=1)
+    out = transition.read_checks(tmp_path, 1)
+    assert out["ok"] is False
+    assert out["green"] is False
