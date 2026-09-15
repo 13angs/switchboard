@@ -1,6 +1,7 @@
 import { useState, useMemo, type ReactNode } from 'react';
 import { startSession, type WorkspaceDispatch } from '../lib/api';
 import type { DispatchRole } from '../lib/dispatch-prompt';
+import { resolveDispatchTarget, type DispatchHarness } from '../lib/dispatch-target';
 
 /** ADR-0037 §SD2 — grill has no row to resolve a role→tier pair from, so its
  *  box is two dropdowns (tier, effort) instead of the usual role list. `role`
@@ -81,6 +82,7 @@ export function DispatchDialog({
   const roles = fixedRole ? all.filter((r) => r.role === fixedRole.role) : all;
   const defaultRole = roles.find((r) => r.role === preferredRole);
   const [roleName, setRoleName] = useState((defaultRole ?? roles[0])?.role ?? '');
+  const [harnessName, setHarnessName] = useState<DispatchHarness>('claude');
 
   // ADR-0037 §SD2 — grill's own two-dropdown picker, independent of the
   // role-list state above. Both live in `useState` scoped to this component
@@ -106,6 +108,10 @@ export function DispatchDialog({
         }
       : undefined
     : roles.find((r) => r.role === roleName);
+  const codexTiers = dispatch.present ? dispatch.codex_tiers ?? null : null;
+  const target = role && (harnessName === 'claude' || codexTiers)
+    ? resolveDispatchTarget(role, harnessName, codexTiers)
+    : null;
 
   const composed = useMemo(() => (role ? compose(role) : ''), [role, compose]);
   const [prompt, setPrompt] = useState<string | null>(null);
@@ -115,13 +121,13 @@ export function DispatchDialog({
   const [error, setError] = useState<string | null>(null);
 
   async function send() {
-    if (!role) return;
+    if (!role || !target) return;
     setSending(true);
     setError(null);
     try {
-      const res = await startSession('claude', 'claude', undefined, {
-        model: role.model,
-        effort: role.effort ?? undefined,
+      const res = await startSession(target.harness, target.provider, undefined, {
+        model: target.model,
+        effort: target.effort ?? undefined,
         prompt: text,
       });
       if (openMode === 'new-tab') {
@@ -133,7 +139,7 @@ export function DispatchDialog({
         // issued for this PTY (ADR-0028 §SD1) so the terminal page's first WS
         // connect attaches to it instead of spawning a second, blank PTY
         // (risks.md S-11) — session_id, when present, is the stronger identity.
-        const params = new URLSearchParams({ view: 'terminal', harness: 'claude' });
+        const params = new URLSearchParams({ view: 'terminal', harness: target.harness });
         if (res.session_id) {
           params.set('session_id', res.session_id);
         } else if (res.attach_key) {
@@ -188,6 +194,16 @@ export function DispatchDialog({
           </div>
         ) : (
           <>
+            <label className="dlg-harness">
+              harness{' '}
+              <select
+                value={harnessName}
+                onChange={(e) => setHarnessName(e.target.value as DispatchHarness)}
+              >
+                <option value="claude">Claude</option>
+                <option value="codex" disabled={!codexTiers}>Codex</option>
+              </select>
+            </label>
             {tierPicker ? (
               // ADR-0037 §SD2 — grill has no row to resolve a role from yet,
               // so the operator picks tier + effort directly instead of a
@@ -249,13 +265,13 @@ export function DispatchDialog({
 
             {fixedRole && <p className="dlg-fixed-role">{fixedRole.why}</p>}
 
-            {role && (
+            {role && target && (
               <p className="dlg-model">
-                รันด้วย <code>{role.model}</code>
-                {role.effort && (
+                รันด้วย {target.harness} · <code>{target.model}</code>
+                {target.effort && (
                   <>
                     {' '}
-                    · effort <code>{role.effort}</code>
+                    · effort <code>{target.effort}</code>
                   </>
                 )}
                 <span className="src">
@@ -305,7 +321,7 @@ export function DispatchDialog({
               <button
                 className="dlg-go"
                 onClick={send}
-                disabled={sending || !role}
+                disabled={sending || !target}
               >
                 {sending
                   ? 'กำลังสั่ง…'

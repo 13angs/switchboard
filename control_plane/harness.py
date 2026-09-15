@@ -98,27 +98,22 @@ def build_command(
         if session_id:
             cmd += ["--resume", session_id]
         return cmd
-    if model:
-        # Only the Claude adapter is verified against a real `--model` run.
-        # Guessing the flag for another CLI would fail at exec, inside a PTY,
-        # where the error reaches the user as a blank terminal.
-        raise ValueError(f"model pinning is not supported for harness: {harness_name}")
-    if effort:
-        # Same reasoning as model pinning above (ADR-0032 §SD4): neither CLI's
-        # effort flag, if any, has been verified — refuse rather than guess.
-        raise ValueError(f"effort pinning is not supported for harness: {harness_name}")
     if harness_name == "codex":
         if provider != "openai":
             raise ValueError(f"unknown Codex provider: {provider}")
-        cmd = [
-            os.environ.get("ORCH_CODEX_BIN", config.CODEX_BIN),
-            "--no-alt-screen",
-            "-C",
-            cwd,
-        ]
+        cmd = [os.environ.get("ORCH_CODEX_BIN", config.CODEX_BIN)]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["-c", f"model_reasoning_effort={effort}"]
+        cmd += ["--no-alt-screen", "-C", cwd]
         if session_id:
             cmd += ["resume", session_id]
         return cmd
+    if model:
+        raise ValueError(f"model pinning is not supported for harness: {harness_name}")
+    if effort:
+        raise ValueError(f"effort pinning is not supported for harness: {harness_name}")
     if harness_name == "agy":
         if provider != "google":
             raise ValueError(f"unknown agy provider: {provider}")

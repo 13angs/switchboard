@@ -265,6 +265,69 @@ def test_codex_store_parses_response_item_assistant_messages():
     assert messages[1]["text"] == "รับทราบครับ"
 
 
+def test_codex_store_parses_current_cli_response_item_user_turn():
+    path = _sample_codex_session(session_id="codex-current-user-1")
+    _write_jsonl(
+        path,
+        [
+            {
+                "timestamp": "2026-09-15T15:50:29.705Z",
+                "type": "session_meta",
+                "payload": {"session_id": "codex-current-user-1", "cwd": "/task"},
+            },
+            {
+                "timestamp": "2026-09-15T15:50:30.166Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first task"}],
+                },
+            },
+            {
+                "timestamp": "2026-09-15T15:50:31.930Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+            },
+        ],
+    )
+
+    summary = codex_store.read_session(path)
+    assert summary.turn_count == 2
+    assert [m["role"] for m in codex_store.read_messages(path)] == ["user", "assistant"]
+    assert [m["role"] for m in codex_store.read_messages_rich(path)] == ["user", "assistant"]
+
+
+def test_codex_store_dedupes_legacy_and_current_user_turns():
+    path = _sample_codex_session(session_id="codex-mixed-user-1")
+    _write_jsonl(
+        path,
+        [
+            {
+                "timestamp": "2026-09-15T15:50:30.100Z",
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "first task"},
+            },
+            {
+                "timestamp": "2026-09-15T15:50:30.166Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first task"}],
+                },
+            },
+        ],
+    )
+
+    assert [m["text"] for m in codex_store.read_messages(path)] == ["first task"]
+    assert len(codex_store.read_messages_rich(path)) == 1
+
+
 def test_codex_store_dedupes_event_msg_and_response_item_assistant_text():
     path = _sample_codex_session(session_id="codex-response-item-dupe-1")
     _write_jsonl(

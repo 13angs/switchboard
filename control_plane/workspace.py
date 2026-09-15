@@ -211,7 +211,7 @@ def workspace_overview(
     return payload
 
 
-def allowed_models(repo_root: str) -> set[str]:
+def allowed_models(repo_root: str, harness_name: str = "claude") -> set[str]:
     """Model ids this workspace has declared a tier for.
 
     The spawn path validates against this rather than a list held in switchboard:
@@ -225,10 +225,17 @@ def allowed_models(repo_root: str) -> set[str]:
     dispatch = payload.get("dispatch") or {}
     if not dispatch.get("present"):
         return set()
-    return set(dispatch.get("tiers", {}).values())
+    tiers = (
+        dispatch.get("tiers")
+        if harness_name == "claude"
+        else dispatch.get("codex_tiers") if harness_name == "codex" else None
+    )
+    return set((tiers or {}).values())
 
 
-def model_tier(repo_root: str, model: str) -> Optional[str]:
+def model_tier(
+    repo_root: str, model: str, harness_name: str = "claude"
+) -> Optional[str]:
     """Which tier name a model id belongs to, or None when it isn't declared.
 
     The spawn path uses this to enforce ADR-0032 §SD6: `--effort` must never
@@ -242,7 +249,12 @@ def model_tier(repo_root: str, model: str) -> Optional[str]:
     dispatch = payload.get("dispatch") or {}
     if not dispatch.get("present"):
         return None
-    for tier, m in dispatch.get("tiers", {}).items():
+    tiers = (
+        dispatch.get("tiers")
+        if harness_name == "claude"
+        else dispatch.get("codex_tiers") if harness_name == "codex" else None
+    )
+    for tier, m in (tiers or {}).items():
         if m == model:
             return tier
     return None
@@ -953,6 +965,7 @@ def _scan_dispatch(root: Path) -> dict:
     return {
         "present": True,
         "tiers": tiers,
+        "codex_tiers": _parse_codex_tier_models(sop) or None,
         "roles": roles,
         "source": {
             "tiers": "docs/sops/sop-agent-orchestration.md",
@@ -967,9 +980,26 @@ def _parse_tier_models(path: Path) -> dict[str, str]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
-    found = {tier: model for tier, model in _TIER_ASSIGN.findall(text)}
+    # The Codex lineup follows the Claude sentence in the same SOP. Do not
+    # let its repeated tier names overwrite the Claude adapter's map.
+    claude_text = text.split("**Canonical Codex tier → model map**", 1)[0]
+    found = {tier: model for tier, model in _TIER_ASSIGN.findall(claude_text)}
     # All three or none: a partial lineup would let a role resolve while its
     # neighbour silently does not, which is harder to notice than a clean off.
+    return found if all(t in found for t in _ROLE_TIERS) else {}
+
+
+def _parse_codex_tier_models(path: Path) -> dict[str, str]:
+    """Codex's own full tier lineup, declared beside Claude's in the SOP."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    marker = "**Canonical Codex tier → model map**"
+    if marker not in text:
+        return {}
+    sentence = text.split(marker, 1)[1].split("\n\n", 1)[0]
+    found = {tier: model for tier, model in _TIER_ASSIGN.findall(sentence)}
     return found if all(t in found for t in _ROLE_TIERS) else {}
 
 

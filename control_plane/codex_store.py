@@ -75,17 +75,18 @@ def _turn_from_event(ev: dict) -> Optional[tuple[str, str, Optional[str]]]:
         return (role, text, ev.get("timestamp")) if text else None
 
     if etype == "response_item" and payload.get("type") == "message":
-        # Codex also records OpenAI response items. Use assistant items as a
-        # fallback because user input is already represented by event_msg rows.
-        if payload.get("role") != "assistant":
+        # Current Codex records the first user turn as a response_item rather
+        # than the older event_msg/user_message row. Both are valid evidence.
+        role = payload.get("role")
+        if role not in {"user", "assistant"}:
             return None
         text = _content_text(payload)
-        return ("assistant", text, ev.get("timestamp")) if text else None
+        return (role, text, ev.get("timestamp")) if text else None
 
     return None
 
 
-def _seen_assistant_duplicate(
+def _seen_turn_duplicate(
     seen: dict[str, Optional[datetime]], text: str, ts: Optional[datetime]
 ) -> bool:
     if text not in seen:
@@ -113,6 +114,7 @@ def read_session(jsonl_path: Path) -> SessionSummary:
     turns = 0
     total_cost = None
     seen_assistant_texts: dict[str, Optional[datetime]] = {}
+    seen_user_texts: dict[str, Optional[datetime]] = {}
 
     try:
         lines = jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -163,7 +165,10 @@ def read_session(jsonl_path: Path) -> SessionSummary:
             continue
         role, text, _raw_ts = turn
         if role == "assistant":
-            if _seen_assistant_duplicate(seen_assistant_texts, text, ts):
+            if _seen_turn_duplicate(seen_assistant_texts, text, ts):
+                continue
+        elif role == "user":
+            if _seen_turn_duplicate(seen_user_texts, text, ts):
                 continue
         turns += 1
         if title is None and role == "user":
@@ -302,6 +307,7 @@ def read_messages(
     msgs = []
     since_dt = _parse_ts(since)
     seen_assistant_texts: dict[str, Optional[datetime]] = {}
+    seen_user_texts: dict[str, Optional[datetime]] = {}
     try:
         lines = jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -322,7 +328,10 @@ def read_messages(
         if since_dt and (ts_dt is None or ts_dt <= since_dt):
             continue
         if role == "assistant":
-            if _seen_assistant_duplicate(seen_assistant_texts, text, ts_dt):
+            if _seen_turn_duplicate(seen_assistant_texts, text, ts_dt):
+                continue
+        elif role == "user":
+            if _seen_turn_duplicate(seen_user_texts, text, ts_dt):
                 continue
         msgs.append({"role": role, "text": text, "ts": ts})
 
@@ -476,13 +485,14 @@ def _rich_turn_from_event(ev: dict) -> Optional[dict]:
         ptype = payload.get("type")
 
         if ptype == "message":
-            if payload.get("role") != "assistant":
+            role = payload.get("role")
+            if role not in {"user", "assistant"}:
                 return None
             content = payload.get("content")
             blocks = _content_blocks_codex(content)
             if not blocks:
                 return None
-            return {"role": "assistant", "ts": ev.get("timestamp"), "content": blocks}
+            return {"role": role, "ts": ev.get("timestamp"), "content": blocks}
 
         if ptype == "function_call":
             name = payload.get("name", "?")
@@ -542,11 +552,12 @@ def read_messages_rich(
     """Return main-thread Codex turns with structured content blocks.
 
     Same contract as claude_store.read_messages_rich() (ADR-0006).
-    Deduplication of near-duplicate assistant messages is preserved.
+    Deduplication of near-duplicate message rows is preserved.
     """
     msgs: list[dict] = []
     since_dt = _parse_ts(since)
     seen_texts: dict[str, Optional[datetime]] = {}
+    seen_user_texts: dict[str, Optional[datetime]] = {}
     try:
         lines = jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -567,13 +578,14 @@ def read_messages_rich(
         if since_dt and (ts_dt is None or ts_dt <= since_dt):
             continue
         # Dedup: flatten content to a key for near-duplicate detection.
-        if turn.get("role") == "assistant":
+        if turn.get("role") in {"assistant", "user"}:
             text_key = " ".join(
                 b.get("text", "")
                 for b in turn.get("content", [])
                 if b.get("type") == "text"
             )
-            if text_key and _seen_assistant_duplicate(seen_texts, text_key, ts_dt):
+            seen = seen_user_texts if turn["role"] == "user" else seen_texts
+            if text_key and _seen_turn_duplicate(seen, text_key, ts_dt):
                 continue
         msgs.append(turn)
 

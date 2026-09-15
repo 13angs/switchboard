@@ -266,6 +266,8 @@ export type WorkspaceDispatch =
   | {
       present: true;
       tiers: Record<string, string>;
+      /** A separate three-tier Codex map, or null when the SOP has none. */
+      codex_tiers?: Record<string, string> | null;
       roles: {
         role: string;
         /** Off the same roles.md row as the tier (S37) — `""` when
