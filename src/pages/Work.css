@@ -769,17 +769,20 @@
   display: flex;
   gap: 14px;
 }
-.dlg-tier-picker label {
+.dlg-tier-picker label,
+.dlg-harness {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  align-items: flex-start;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--faint);
   font-family: var(--mono);
 }
-.dlg-tier-picker select {
+.dlg-tier-picker select,
+.dlg-harness select {
   padding: 5px 8px;
   border-radius: 7px;
   border: 1px solid var(--line);

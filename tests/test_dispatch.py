@@ -28,6 +28,11 @@ SOP = """# Agent orchestration
 standard = `claude-sonnet-5`, heavy = `claude-opus-5` (ราคาต่อ tier → § Economics).
 """
 
+SOP_WITH_CODEX = SOP + """
+**Canonical Codex tier → model map**: light = `gpt-5.6-luna`,
+standard = `gpt-5.6-terra`, heavy = `gpt-5.6-sol`.
+"""
+
 ROLES = """# Roles
 
 | อยากรู้ | เปิด |
@@ -204,6 +209,30 @@ def test_allowed_models_is_empty_when_the_map_cannot_be_read(tmp_path):
     }
 
 
+def test_codex_tier_map_is_separate_from_claude(tmp_path):
+    root = str(_repo(tmp_path, sop=SOP_WITH_CODEX))
+    dispatch = workspace.workspace_overview(root, use_cache=False)["dispatch"]
+    assert dispatch["tiers"]["standard"] == "claude-sonnet-5"
+    assert dispatch["codex_tiers"] == {
+        "light": "gpt-5.6-luna",
+        "standard": "gpt-5.6-terra",
+        "heavy": "gpt-5.6-sol",
+    }
+    assert workspace.allowed_models(root, "codex") == set(dispatch["codex_tiers"].values())
+    assert workspace.allowed_models(root, "claude") == set(dispatch["tiers"].values())
+    assert workspace.allowed_models(root, "agy") == set()
+    assert workspace.model_tier(root, "gpt-5.6-terra", "codex") == "standard"
+    assert workspace.model_tier(root, "gpt-5.6-terra", "claude") is None
+
+
+def test_missing_codex_map_keeps_claude_dispatch_available(tmp_path):
+    dispatch = workspace.workspace_overview(
+        str(_repo(tmp_path)), use_cache=False
+    )["dispatch"]
+    assert dispatch["present"] is True
+    assert dispatch["codex_tiers"] is None
+
+
 def test_project_carries_its_client_and_team(tmp_path):
     """The dispatch prompt needs an owner id; these are where it comes from."""
     out = workspace.workspace_overview(str(_repo(tmp_path)), use_cache=False)
@@ -277,17 +306,9 @@ def test_effort_precedes_resume_so_both_survive(tmp_path):
     assert cmd[cmd.index("--resume") + 1] == "sid-1"
 
 
-def test_unverified_harness_refuses_effort_rather_than_dropping_it(tmp_path):
-    for name in ("codex", "agy"):
-        with pytest.raises(ValueError, match="effort pinning"):
-            harness.build_command(
-                name,
-                None,
-                str(tmp_path),
-                "openai" if name == "codex" else "google",
-                None,
-                "high",
-            )
+def test_unverified_agy_refuses_effort_rather_than_dropping_it(tmp_path):
+    with pytest.raises(ValueError, match="effort pinning"):
+        harness.build_command("agy", None, str(tmp_path), "google", None, "high")
 
 
 # ── the dispatch box opens on the project's own role, not roles[0] (ADR-0033) ──
@@ -454,18 +475,28 @@ def test_model_precedes_resume_so_both_survive(tmp_path):
     assert cmd[cmd.index("--resume") + 1] == "sid-1"
 
 
-def test_unverified_harness_refuses_model_rather_than_dropping_it(tmp_path):
+def test_unverified_agy_refuses_model_rather_than_dropping_it(tmp_path):
     """Silently ignoring the flag would run the work on the wrong tier and say
     nothing; guessing another CLI's flag fails inside a PTY as a blank screen."""
-    for name in ("codex", "agy"):
-        with pytest.raises(ValueError, match="model pinning"):
-            harness.build_command(
-                name,
-                None,
-                str(tmp_path),
-                "openai" if name == "codex" else "google",
-                "claude-opus-5",
-            )
+    with pytest.raises(ValueError, match="model pinning"):
+        harness.build_command("agy", None, str(tmp_path), "google", "claude-opus-5")
+
+
+def test_codex_model_and_effort_reach_interactive_argv(tmp_path):
+    cmd = harness.build_command(
+        "codex", None, str(tmp_path), "openai", "gpt-5.6-terra", "medium"
+    )
+    assert cmd == [
+        harness.os.environ.get("ORCH_CODEX_BIN", harness.config.CODEX_BIN),
+        "--model", "gpt-5.6-terra",
+        "-c", "model_reasoning_effort=medium",
+        "--no-alt-screen", "-C", str(tmp_path),
+    ]
+    resumed = harness.build_command(
+        "codex", "saved-id", str(tmp_path), "openai"
+    )
+    assert "--model" not in resumed
+    assert "model_reasoning_effort=medium" not in resumed
 
 
 def test_unverified_harness_still_builds_without_a_model(tmp_path):
@@ -613,7 +644,7 @@ def test_submit_key_is_its_own_write_not_bundled_with_the_prompt(srv):
     collapsed back into a single write."""
     term = _FakeTerm(session_id_after_writes=2)
     assert srv._type_prompt(term, "อ่าน slices.md แล้วทำ M2") is True
-    assert srv._submit_typed_prompt(term) is True
+    assert srv._submit_typed_prompt(term, "อ่าน slices.md แล้วทำ M2") is True
     assert term.written == [
         "อ่าน slices.md แล้วทำ M2".encode("utf-8"),
         srv._chat_message_payload("", "claude"),
@@ -625,8 +656,124 @@ def test_submit_key_matches_harness(srv):
     dispatch path must not hardcode \\n regardless of harness."""
     term = _FakeTerm(session_id_after_writes=1)
     term.harness = "codex"
-    srv._submit_typed_prompt(term)
+    srv._submit_typed_prompt(term, "S5 prompt")
     assert b"".join(term.written).endswith(b"\r")
+
+
+def test_codex_id_before_first_turn_is_not_submission_evidence(
+    srv, monkeypatch, tmp_path
+):
+    import json
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "codex-id"}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(srv.codex_store, "find_session_path", lambda sid: rollout)
+    monkeypatch.setattr(srv, "_SUBMIT_RETRY_WINDOW_S", 0.03)
+    monkeypatch.setattr(srv, "_SUBMIT_RETRY_INTERVAL_S", 0.005)
+    term = _FakeTerm()
+    term.harness = "codex"
+    term.session_id = "codex-id"
+    assert srv._submit_typed_prompt(term, "S5 prompt") is False
+    assert term.written, "Codex must still press Enter after metadata appears"
+
+
+def test_codex_submission_waits_for_its_user_message(srv, monkeypatch, tmp_path):
+    import json
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "codex-id"}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(srv.codex_store, "find_session_path", lambda sid: rollout)
+    monkeypatch.setattr(srv, "_SUBMIT_RETRY_INTERVAL_S", 0.005)
+    term = _FakeTerm()
+    term.harness = "codex"
+    term.session_id = "codex-id"
+    original_write = term.write
+
+    def write_and_log(data):
+        original_write(data)
+        if len(term.written) == 2:
+            with rollout.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"type": "event_msg", "payload": {
+                    "type": "user_message", "message": "S5 prompt"
+                }}) + "\n")
+
+    term.write = write_and_log
+    assert srv._submit_typed_prompt(term, "S5 prompt") is True
+    assert len(term.written) == 2
+
+
+def test_codex_injected_workspace_instructions_are_not_prompt_evidence(
+    srv, monkeypatch, tmp_path
+):
+    import json
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "codex-id"}}) + "\n"
+        + json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": "# AGENTS.md instructions"}
+            ]
+        }}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(srv.codex_store, "find_session_path", lambda sid: rollout)
+    monkeypatch.setattr(srv, "_SUBMIT_RETRY_WINDOW_S", 0.03)
+    monkeypatch.setattr(srv, "_SUBMIT_RETRY_INTERVAL_S", 0.005)
+    term = _FakeTerm()
+    term.harness = "codex"
+    term.session_id = "codex-id"
+
+    assert srv._submit_typed_prompt(term, "S5 prompt") is False
+    assert term.written, "injected context must not stop the Enter retry"
+
+
+def test_session_start_accepts_only_the_selected_harness_model(
+    srv, monkeypatch, tmp_path
+):
+    """A stale browser may send a Claude id with harness=codex; reject it."""
+    import http.client
+    import json
+    import threading
+    from http.server import HTTPServer
+
+    root = str(_repo(tmp_path, sop=SOP_WITH_CODEX))
+    term = _FakeTerm()
+    term.harness = "codex"
+    term.session_id = "codex-id"
+    monkeypatch.setattr(srv, "_get_or_spawn", lambda *_a, **_kw: (term, False))
+    httpd = HTTPServer(("127.0.0.1", 0), srv.make_handler(root))
+    worker = threading.Thread(target=httpd.serve_forever, daemon=True)
+    worker.start()
+
+    def post(model, effort=None):
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port)
+        conn.request(
+            "POST", "/session/start",
+            body=json.dumps({"harness": "codex", "provider": "openai",
+                             "model": model, "effort": effort}),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        status = response.status
+        body = json.loads(response.read())
+        conn.close()
+        return status, body
+
+    try:
+        assert post("gpt-5.6-terra", "medium")[0] == 200
+        assert post("claude-sonnet-5")[0] == 400
+        assert post("gpt-5.6-terra", "max")[0] == 400
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        worker.join(timeout=2)
 
 
 def test_submit_retries_the_enter_key_until_a_session_id_appears(srv):
@@ -636,7 +783,7 @@ def test_submit_retries_the_enter_key_until_a_session_id_appears(srv):
     must keep pressing until `_start_id_capture`'s poll proves a first turn
     landed, not give up after one attempt."""
     term = _FakeTerm(session_id_after_writes=3)
-    assert srv._submit_typed_prompt(term) is True
+    assert srv._submit_typed_prompt(term, "S5 prompt") is True
     assert len(term.written) == 3
     assert all(w == srv._chat_message_payload("", "claude") for w in term.written)
 
@@ -648,7 +795,7 @@ def test_submit_gives_up_after_the_retry_window_with_no_evidence(srv):
     False on real evidence, not swallow the failure by retrying past its
     budget."""
     term = _FakeTerm()  # session_id never appears
-    assert srv._submit_typed_prompt(term) is False
+    assert srv._submit_typed_prompt(term, "S5 prompt") is False
     assert len(term.written) > 1, "must have retried, not given up after one press"
 
 
@@ -662,5 +809,5 @@ def test_submit_stops_retrying_once_the_pty_dies(srv):
                 self._alive = False
 
     term = _DyingTerm()
-    assert srv._submit_typed_prompt(term) is False
+    assert srv._submit_typed_prompt(term, "S5 prompt") is False
     assert len(term.written) == 2

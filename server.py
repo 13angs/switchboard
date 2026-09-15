@@ -351,7 +351,7 @@ def _type_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
     return True
 
 
-def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
+def _submit_typed_prompt(term: terminal.PtyTerminal, prompt: str) -> bool:
     """Press Enter for a prompt `_type_prompt` already typed (ADR-0034 §SD1,
     implemented at ADR-0038 §SD2 — this function is `S24`'s amendment to
     that implementation, not a new decision).
@@ -363,8 +363,9 @@ def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
     whole chunk lands in the input box as `[Pasted text …]` and the trailing
     byte becomes a literal newline *inside* that pasted text instead of
     submitting it. No first turn ever reaches the harness, so it never writes
-    the jsonl that gives the session a `session_id` (ADR-0028) — the session
-    is spawned but permanently invisible to the board.
+    the jsonl that gives a Claude session a `session_id` (ADR-0028) — the
+    session is spawned but permanently invisible to the board. Codex writes
+    that id before a turn, so its evidence is the exact typed user message.
 
     The fix is to never bundle the two again: the submit key goes in its own
     `term.write()`, using the same `_chat_message_payload` encoding (empty
@@ -380,7 +381,9 @@ def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
     `term.session_id`, which `_start_id_capture`'s background poll (started
     at spawn, already running by the time this executes) sets the moment it
     finds that jsonl — capped at `_SUBMIT_RETRY_WINDOW_S`. Evidence of a first
-    turn decides when to stop, not elapsed time.
+    turn decides when to stop, not elapsed time. Codex may also inject
+    AGENTS.md as a user message before the dispatch prompt; only the exact
+    typed prompt proves this click submitted.
 
     Returns whether that evidence showed up before the window closed. This is
     the value `prompt_submitted` reports — bytes reaching the PTY is no
@@ -388,13 +391,27 @@ def _submit_typed_prompt(term: terminal.PtyTerminal) -> bool:
     """
     submit_key = _chat_message_payload("", term.harness)
     deadline = time.time() + _SUBMIT_RETRY_WINDOW_S
-    while term.is_alive() and term.session_id is None and time.time() < deadline:
+    while term.is_alive() and not _dispatch_turn_seen(term, prompt) and time.time() < deadline:
         try:
             term.write(submit_key)
         except OSError:
             return False
         time.sleep(_SUBMIT_RETRY_INTERVAL_S)
-    return term.session_id is not None
+    return _dispatch_turn_seen(term, prompt)
+
+
+def _dispatch_turn_seen(term: terminal.PtyTerminal, prompt: str) -> bool:
+    """Claude's id proves submission; Codex needs the exact dispatched turn."""
+    sid = term.session_id
+    if not sid:
+        return False
+    if term.harness != "codex":
+        return True
+    path = codex_store.find_session_path(sid)
+    return bool(path and any(
+        m["role"] == "user" and m["text"] == prompt
+        for m in codex_store.read_messages(path)
+    ))
 
 
 def _transcript_source(
@@ -1528,13 +1545,21 @@ def make_handler(repo_root: str):
             if not isinstance(requested_provider, str):
                 requested_provider = None
 
+            try:
+                harness_name, provider = harness.resolve(
+                    requested_provider, requested_harness
+                )
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+                return
+
             requested_model = body.get("model")
             if requested_model is not None and not isinstance(requested_model, str):
                 self._json(400, {"error": "model must be a string"})
                 return
             requested_model = (requested_model or "").strip() or None
             if requested_model:
-                allowed = workspace.allowed_models(repo_root)
+                allowed = workspace.allowed_models(repo_root, harness_name)
                 if not allowed:
                     self._json(
                         409,
@@ -1571,9 +1596,13 @@ def make_handler(repo_root: str):
                         },
                     )
                     return
+                if harness_name == "codex" and requested_effort == "max":
+                    self._json(400, {"error": "Codex effort max is unsupported"})
+                    return
                 if (
-                    requested_model
-                    and workspace.model_tier(repo_root, requested_model) == "light"
+                    harness_name == "claude"
+                    and requested_model
+                    and workspace.model_tier(repo_root, requested_model, harness_name) == "light"
                 ):
                     # ADR-0032 §SD6: the light-tier model (Haiku) rejects
                     # `--effort` outright — it still uses `budget_tokens`.
@@ -1593,14 +1622,6 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "prompt must be a string"})
                 return
             prompt = prompt or ""
-            try:
-                harness_name, provider = harness.resolve(
-                    requested_provider, requested_harness
-                )
-            except ValueError as e:
-                self._json(400, {"error": str(e)})
-                return
-
             try:
                 child_env = harness.provider_env(harness_name, provider, _ENV_FILE)
             except ValueError as e:
@@ -1638,7 +1659,7 @@ def make_handler(repo_root: str):
             # Enter as its own write and only reports True once the harness's
             # jsonl proves it landed.
             prompt_submitted = (
-                _submit_typed_prompt(term) if prompt_typed and submit_prompt else False
+                _submit_typed_prompt(term, prompt) if prompt_typed and submit_prompt else False
             )
 
             # Wait for the id-capture thread to discover the session_id (max 30s).
