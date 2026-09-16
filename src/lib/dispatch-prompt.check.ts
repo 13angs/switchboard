@@ -68,42 +68,13 @@ assert(p.includes("M2"), "slice id present");
 assert(p.includes(slice.title), "slice title present");
 assert(p.includes("อ. 09-08"), "day present");
 
-// ── pointers, never the rules themselves ──
-// The team-os spine is cited by path. If a future edit inlines the definition of
-// done, this check is what notices: the prompt would carry the list, not the path.
-assert(
-  p.includes("team-os/ways-of-working/definition-of-done.md"),
-  "DoD cited by path",
-);
-assert(
-  p.includes("team-os/ways-of-working/stuck-rule.md"),
-  "stuck rule cited by path",
-);
-assert(p.includes("team-os/decisions/README.md"), "ADR rule cited by path");
-assert(
-  !p.includes("เขียนเทสต์"),
-  "the DoD items themselves must not be inlined",
-);
-
-// ── the one rule short enough to carry is the one everything hangs off ──
-assert(p.includes("ย้อนกลับได้"), "the reversible/irreversible rule is stated");
-assert(
-  p.includes("ADR ก่อนลงมือ"),
-  "ADR-before-acting is stated, not left to the file",
-);
-
-// ── a project without risks.md is not told to read risks.md ──
+// ── an otherwise sparse project still composes a task prompt ──
 const bare: WorkspaceProject = {
   ...project,
   has: { scope: false, risks: false, hld: false },
 };
 const pb = composePrompt(bare, slice, role);
-assert(!pb.includes("scope.md"), "absent scope.md not cited");
-assert(!pb.includes("risks.md"), "absent risks.md not cited");
-assert(
-  pb.includes("slices.md"),
-  "slices.md always cited — the board read it to get here",
-);
+assert(pb.includes("Assignment:"), "sparse project keeps its assignment");
 
 // ── assignment: S37 — the dispatched role fills the office and role segments ──
 assert(
@@ -202,14 +173,6 @@ assert(
   "prepare carries the row's own id, not a second one",
 );
 
-// ── the spine is read in both shapes ──
-for (const f of [
-  "team-os/ways-of-working/definition-of-done.md",
-  "team-os/ways-of-working/stuck-rule.md",
-  "projects/ai-chatbot/slices.md",
-])
-  assert(prep.includes(f), `${f} cited in the prepare shape too`);
-
 // ── ADR-0036 §SD4 — the third shape: a ritual off a calendar bar ──
 
 const ritual: Ritual = {
@@ -246,18 +209,6 @@ assert(
   "the run this bar stands for is stated — three comm-windows share one key",
 );
 
-// The runbook is pointed at, never unrolled: a prompt that inlined the steps
-// would be a second copy of the runbook (team/README.md § Core principle).
-assert(rp.includes(ritual.reads), "the ritual's own definition pointer is cited");
-for (const f of [
-  "team-os/ways-of-working/rituals.md",
-  "team-os/ways-of-working/definition-of-done.md",
-  "team-os/ways-of-working/stuck-rule.md",
-  "team-os/decisions/README.md",
-])
-  assert(rp.includes(f), `${f} cited in the ritual shape too`);
-assert(rp.includes("ย้อนกลับได้"), "the central rules ride along unchanged");
-
 // §SD3 — four full segments, and the `-` disclaimer that belongs to the
 // slices.md path must not leak onto this one: the office really did resolve.
 assert(
@@ -277,16 +228,13 @@ assert(rp.includes("ห้ามต่อท้ายวันที่"), "and 
 assert(rp.includes("แผนของวันเป็นข้อผูกพัน"), "the day-plan guard is stated");
 
 // A register row with no definition pointer still dispatches (§SD3 blocks on
-// key/role/client only) — but the prompt must not pretend it knows the steps.
+// key/role/client only).
 const noReads = composeRitualPrompt({ ...ritual, reads: "" }, po, {
   date: "2026-09-08",
   start: "16:45",
   end: "17:00",
 });
-assert(
-  noReads.includes("⚠️") && noReads.includes("อย่าเดาขั้นตอนเอง"),
-  "a missing definition pointer is said out loud, not papered over",
-);
+assert(noReads.includes("Assignment:"), "a ritual without reads still has its assignment");
 
 // ── ADR-0037 — the fourth shape: grill, before a row exists ──
 
@@ -323,21 +271,9 @@ assert(
   gp.includes("sop-work-ownership.md"),
   "grill points at the Team-Slug-Approved precedent rather than copying it",
 );
-// The three-file spine and the central rules still ride along — grill is a
-// team-os session like the other three shapes, not a special case that skips
-// the stop-rule / DoD pointers.
-for (const f of [
-  "team-os/ways-of-working/definition-of-done.md",
-  "team-os/ways-of-working/stuck-rule.md",
-  "team-os/decisions/README.md",
-])
-  assert(gp.includes(f), `${f} cited in the grill shape too`);
-assert(gp.includes("ย้อนกลับได้"), "the central rules ride along unchanged");
-
-// A project missing scope.md is not told to read it — same discipline as the
-// other three shapes.
+// A project missing scope.md still produces the same task-specific scope.
 const grillBare = composeGrillPrompt(bare, grillRole);
-assert(!grillBare.includes("scope.md"), "absent scope.md not cited in grill");
+assert(grillBare.includes("ไม่ implement เอง"), "grill scope is independent of boilerplate");
 
 // ── fill-gaps: grill's mechanics, with an agenda (ADR-0040 §SD1) ──
 const gaps = {
@@ -374,14 +310,6 @@ assert(
   fg.includes("ไม่ implement เอง"),
   "fill-gaps keeps grill's no-implementation bar",
 );
-for (const f of [
-  "team-os/ways-of-working/definition-of-done.md",
-  "team-os/ways-of-working/stuck-rule.md",
-  "team-os/decisions/README.md",
-])
-  assert(fg.includes(f), `${f} cited in the fill-gaps prompt too`);
-assert(fg.includes("ย้อนกลับได้"), "the central rules ride along here too");
-
 // Both axes have an honest empty state, and the role axis has an honest
 // *unknown* state — dispatch unreadable must not read as "no gaps".
 const noGaps = composeFillGapsPrompt(
@@ -404,9 +332,9 @@ assert(
   "an unreadable role axis is stated, never shown as zero gaps",
 );
 
-// A project missing scope.md is not told to read it here either.
+// A project missing scope.md still produces the measured agenda.
 const fgBare = composeFillGapsPrompt(bare, gaps, grillRole);
-assert(!fgBare.includes(`projects/${bare.name}/scope.md`), "absent scope.md not cited in fill-gaps");
+assert(fgBare.includes("rollout"), "fill-gaps agenda is independent of boilerplate");
 
 // ── the fifth shape: a role closing its own §7.2 line (ADR-0042 §SD5) ──
 
@@ -458,14 +386,6 @@ assert(
   rg.includes("การไล่เติมให้ครบเป็นงานคนละใบที่เจ้าของกดเอง"),
   "…and the prompt says why, rather than leaving the session to infer it",
 );
-for (const f of [
-  "team-os/ways-of-working/definition-of-done.md",
-  "team-os/ways-of-working/stuck-rule.md",
-  "team-os/decisions/README.md",
-])
-  assert(rg.includes(f), `${f} cited in the role-gap prompt too`);
-assert(rg.includes("ย้อนกลับได้"), "the central rules ride along here too");
-
 // A role with rows but no missing file, and a role with neither: the deliverable
 // line is the half that differs, so it must not be the same sentence twice.
 const rowGap = {
@@ -495,12 +415,9 @@ assert(
   "the id follows the row's role, not the dialog's default",
 );
 
-// A project missing scope.md is not told to read it here either.
+// A project missing scope.md still produces the role's close-out target.
 const rgBare = composeRoleGapPrompt(bare, fileGap, devopsRole);
-assert(
-  !rgBare.includes(`projects/${bare.name}/scope.md`),
-  "absent scope.md not cited in the role-gap prompt",
-);
+assert(rgBare.includes("rollout.md"), "role-gap target is independent of boilerplate");
 
 // ── ADR-0047: the act prompt hands the session the onward press ──
 // The one thing worth checking offline is the thing a reviewer cannot see by
@@ -570,5 +487,20 @@ assert(
   !noOrigin.includes("127.0.0.1") && !noOrigin.includes("localhost"),
   "and never guessed",
 );
+
+// S53: every shape keeps its task-specific content but omits the shared
+// read-before-start and central-rule boilerplate.
+for (const [shape, prompt] of [
+  ["act", p],
+  ["prepare", prep],
+  ["ritual", rp],
+  ["grill", gp],
+  ["fill-gaps", fg],
+  ["role-gap", rg],
+] as const) {
+  assert(!prompt.includes("อ่านก่อนเริ่ม"), `${shape} omits read-before-start boilerplate`);
+  assert(!prompt.includes("กฎกลางของ team-os"), `${shape} omits central-rule boilerplate`);
+  assert(!prompt.includes("ย้อนกลับได้ →"), `${shape} omits copied central rules`);
+}
 
 console.log("dispatch-prompt check: OK");

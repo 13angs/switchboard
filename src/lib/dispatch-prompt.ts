@@ -2,20 +2,17 @@
  * Composing the prompt a dispatched session opens with (ADR-0030 §SD4).
  *
  * The shape follows team-os, not this repo's old launcher: a role, the slice it
- * owns, and *pointers* to the files that hold the rules. Never the rules
- * themselves — `team/README.md § Core principle` is "reference, never copy",
- * and a prompt that inlines a rule becomes a second copy of it that drifts.
+ * owns. The workspace operating law is loaded by the dispatched session rather
+ * than copied into this task prompt.
  *
  * Two shapes live here (ADR-0036 §SD5): `act` for a row that is waiting on
- * work, and `prepare` for a row the owner has marked 🖐️ — same spine, same
- * sentences, different job. Splitting them is the whole point of the ADR: one
+ * work, and `prepare` for a row the owner has marked 🖐️ — different job.
+ * Splitting them is the whole point of the ADR: one
  * button that meant two things would be worse than the closed door it replaced.
  *
  * A third shape, `composeRitualPrompt`, dispatches a *ritual* rather than a
- * slice (ADR-0036 §SD4). It lives in this module rather than a new file because
- * it is the same spine and the same sentences over a different subject — and
- * because one file is one place to check that none of the three ever starts
- * inlining the rules it points at.
+ * slice (ADR-0036 §SD4). It lives in this module because it is a task-specific
+ * prompt over a different subject.
  *
  * A fourth shape, `composeGrillPrompt` (ADR-0037), dispatches a *grill* — a
  * project with no settled row yet. It differs from the other three in the one
@@ -30,8 +27,7 @@
  *
  * Since ADR-0047 the `act` shape carries one more block: the session, not the
  * owner, is the one who presses the card onward when its station's work is done
- * (§SD1). It keeps the "pointers, never the rules" discipline the hard way —
- * the block does not print the transition table, it tells the session to ASK
+ * (§SD1). The block does not print the transition table; it tells the session to ASK
  * the gate (`GET /work/transitions`) and press what the gate returns.
  *
  * Kept in pure functions so they are checkable offline (dispatch-prompt.check.ts)
@@ -75,22 +71,6 @@ export function promptShapeFor(column: string): PromptShape {
 export function dispatchLabel(shape: PromptShape): string {
   return shape === "prepare" ? "เตรียมเรื่อง" : "สั่งงาน";
 }
-
-/** Files every dispatched role reads before starting — the team-os spine. */
-const SPINE = [
-  'team-os/ways-of-working/definition-of-done.md — "เสร็จ" แปลว่าอะไร',
-  "team-os/ways-of-working/stuck-rule.md — ติดแล้วทำยังไง",
-  "team-os/decisions/README.md § กฎการเขียน ADR",
-];
-
-/** The three rules short enough to carry rather than cite — everything else in
- *  team-os hangs off them, and a session that has not read a file yet still has
- *  to know when to stop. Shared by every prompt shape so they cannot drift. */
-const CENTRAL_RULES = [
-  "**ย้อนกลับได้ → ตัดสินเอง · ย้อนกลับไม่ได้ → เขียน ADR ก่อนลงมือ** (ไม่ใช่เขียนย้อนหลัง)",
-  "ไม่แน่ใจว่าย้อนกลับได้ไหม → ถือว่าย้อนกลับไม่ได้ แล้วถาม",
-  "ติด 3 รอบแล้วไม่ขยับ → หยุด แล้วโพสต์ 3 บรรทัด (ติด: / ลองแล้ว: / ต้องการ:)",
-];
 
 /**
  * The assignment id, as far as the board can honestly resolve it.
@@ -234,19 +214,6 @@ export function composePrompt(
   }
   lines.push("");
 
-  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
-  lines.push(`- projects/${project.name}/slices.md — แถวของงานนี้`);
-  if (project.has.scope)
-    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
-  if (project.has.risks)
-    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
-  for (const s of SPINE) lines.push(`- ${s}`);
-  lines.push("");
-
-  lines.push("กฎกลางของ team-os:");
-  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
-  lines.push("");
-
   if (shape === "prepare") {
     // The ⛔ block names the actions the 🖐️ mark holds back, by name. A generic
     // "be careful" line would leave the session to guess which half of the row
@@ -324,24 +291,6 @@ export function composeRitualPrompt(
   );
   lines.push("");
 
-  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
-  if (ritual.reads) {
-    lines.push(`- ${ritual.reads} — นิยามของจังหวะนี้ + ขั้นที่ต้องรัน`);
-  } else {
-    lines.push(
-      "- ⚠️ ทะเบียนไม่ได้ชี้ว่านิยามของจังหวะนี้อยู่ไฟล์ไหน — หาให้เจอก่อนลงมือ อย่าเดาขั้นตอนเอง",
-    );
-  }
-  lines.push(
-    "- team-os/ways-of-working/rituals.md § เจ้าของของแต่ละจังหวะ — แถวของจังหวะนี้",
-  );
-  for (const f of SPINE) lines.push(`- ${f}`);
-  lines.push("");
-
-  lines.push("กฎกลางของ team-os:");
-  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
-  lines.push("");
-
   // The one rule this surface can break by accident: a ritual session works
   // inside meta/daily/*, where "record what happened" and "change what the day
   // committed to" look like the same edit. Cited, not unrolled.
@@ -391,28 +340,6 @@ export function composeGrillPrompt(
   lines.push(
     "เสร็จเมื่อ: สัมภาษณ์จนตกผลึกครบ (grill-me) แล้วเปิด PR ที่แก้เฉพาะไฟล์นั้น — **ไม่ implement เอง** ในเซสชันนี้",
   );
-  lines.push("");
-
-  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
-  lines.push(
-    `- projects/${project.name}/slices.md — โครง + กฎการเขียนแถวของไฟล์นี้`,
-  );
-  if (project.has.scope)
-    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
-  if (project.has.risks)
-    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
-  lines.push(
-    "- docs/sops/sop-forge-planning.md — ขั้นตอน elicit → structure → grill → finalize",
-  );
-  lines.push("- tools/grill-me/grill-ruleset.md — วิธี grill-me");
-  lines.push(
-    "- docs/sops/sop-work-ownership.md § Team-Slug-Approved — วิธีเขียน `Assignment:`/`Team-Slug-Approved:` ของเซสชันนี้",
-  );
-  for (const s of SPINE) lines.push(`- ${s}`);
-  lines.push("");
-
-  lines.push("กฎกลางของ team-os:");
-  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
   lines.push("");
 
   lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
@@ -502,32 +429,6 @@ export function composeFillGapsPrompt(
   } else {
     lines.push("- **role**: ทุก role มีอย่างน้อยหนึ่งแถวแล้ว");
   }
-  lines.push("");
-
-  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
-  lines.push(
-    `- projects/${project.name}/slices.md — โครง + กฎการเขียนแถวของไฟล์นี้ + แถวที่มีอยู่แล้ว`,
-  );
-  if (project.has.scope)
-    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
-  if (project.has.risks)
-    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
-  lines.push(
-    "- team-os/projects/README.md § ช่องที่ต้นแบบมี แต่ workspace ยังไม่มี — ช่องแต่ละช่องตอบคำถามอะไร",
-  );
-  lines.push(
-    "- team-os/people/roles.md § แกนความเป็นเจ้าของ — role ไหนถือ discipline อะไร",
-  );
-  lines.push("- docs/sops/sop-forge-planning.md — elicit → structure → grill → finalize");
-  lines.push("- tools/grill-me/grill-ruleset.md — วิธี grill-me");
-  lines.push(
-    "- docs/sops/sop-work-ownership.md § Team-Slug-Approved — วิธีเขียน `Assignment:`/`Team-Slug-Approved:` ของเซสชันนี้",
-  );
-  for (const s of SPINE) lines.push(`- ${s}`);
-  lines.push("");
-
-  lines.push("กฎกลางของ team-os:");
-  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
   lines.push("");
 
   lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
@@ -655,27 +556,6 @@ export function composeRoleGapPrompt(
       `${files.length > 0 ? "2" : "1"}. **แถวใน \`projects/${project.name}/slices.md\` ที่เขียนชื่อ role นี้** — หรือเหตุผลที่เขียนไว้ว่าโปรเจกต์นี้ไม่มีงานของ role นี้จริง ๆ`,
     );
   }
-  lines.push("");
-
-  lines.push("อ่านก่อนเริ่ม — อย่าเดาจากชื่อไฟล์:");
-  lines.push(
-    `- projects/${project.name}/slices.md — แถวที่มีอยู่แล้ว + กฎการเขียนแถวของไฟล์นี้`,
-  );
-  if (project.has.scope)
-    lines.push(`- projects/${project.name}/scope.md — อะไรอยู่นอกขอบเขต`);
-  if (project.has.risks)
-    lines.push(`- projects/${project.name}/risks.md — ความเสี่ยงที่เปิดอยู่`);
-  lines.push(
-    "- docs/sops/sop-pipeline-handoff.md § 7.2 · § 7.3 — บรรทัดของ role นี้ และกติกาที่ให้ใบชื่ออื่นตอบแทนได้",
-  );
-  lines.push(
-    "- team-os/people/roles.md § แกนความเป็นเจ้าของ — role นี้ถือ discipline อะไร และบันทึกที่ไหน",
-  );
-  for (const s of SPINE) lines.push(`- ${s}`);
-  lines.push("");
-
-  lines.push("กฎกลางของ team-os:");
-  for (const r of CENTRAL_RULES) lines.push(`- ${r}`);
   lines.push("");
 
   lines.push("⛔ ขอบเขตของเซสชันนี้ — เซสชันนี้ทำแทนไม่ได้:");
