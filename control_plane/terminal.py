@@ -1,7 +1,7 @@
 """PTY terminal — spawn harness PTYs, bidirectional I/O proxy.
 
-Spawns an interactive Claude/Codex process via pty+subprocess (Python stdlib
-only).
+Spawns an interactive Claude/Codex process via a `control_plane.host`
+runtime (Python stdlib only).
 
 Lifecycle (v2.1): the PTY is decoupled from any single WebSocket connection.
 A PtyTerminal owns a persistent read thread that runs for the life of the child
@@ -17,20 +17,21 @@ reconnect lands on a screen with context rather than a blank one (ADR-0027
 
 The session registry (server.py) keys live PtyTerminals by session_id; kill
 (SIGTERM) and reconnect (re-attach) both go through it.
+
+Everything OS-specific (spawning the PTY, resize, terminate, liveness, reap,
+executable resolution) goes through `control_plane.host` — ADR-0052 SD1. This
+module itself stays importable on any platform; only spawning a harness on a
+platform without a real `HostRuntime` yet (Windows, until `slices.md` `S62`
+lands) fails, and only at spawn time.
 """
 
 from __future__ import annotations
 
-import fcntl
 import os
-import pty
-import signal
-import struct
-import termios
 import threading
 from typing import Callable, Optional, Protocol
 
-from . import harness
+from . import harness, host as host_runtime
 
 
 class Subscriber(Protocol):
@@ -43,11 +44,6 @@ class Subscriber(Protocol):
     def on_data(self, data: bytes) -> None: ...
     def on_control(self, msg: dict) -> None: ...
     def on_exit(self, code: Optional[int]) -> None: ...
-
-
-def _winsz(rows: int, cols: int) -> bytes:
-    """Pack a `struct winsize` — unsigned short rows × cols × xpix × ypix."""
-    return struct.pack("HHHH", rows, cols, 0, 0)
 
 
 # ADR-0027 §SD3 — how much recent PTY output to keep for replay on re-attach.
@@ -81,9 +77,11 @@ class PtyTerminal:
         output_observer: Optional[Callable[["PtyTerminal", bytes], None]] = None,
         input_observer: Optional[Callable[["PtyTerminal", bytes], None]] = None,
         close_observer: Optional[Callable[["PtyTerminal"], None]] = None,
+        host: Optional[host_runtime.HostRuntime] = None,
     ):
         self.fd = fd
         self.pid = pid
+        self._host = host or host_runtime.get_host_runtime()
         self.session_id = session_id
         self.attach_key: Optional[str] = None
         self.harness = harness_name
@@ -184,29 +182,19 @@ class PtyTerminal:
                 pass
 
     def resize(self, rows: int, cols: int) -> None:
-        try:
-            fcntl.ioctl(self.fd, termios.TIOCSWINSZ, _winsz(rows, cols))
-        except OSError:
-            pass
+        self._host.resize(self.fd, rows, cols)
 
     # --- lifecycle -------------------------------------------------------
 
     def is_alive(self) -> bool:
         if self.closed:
             return False
-        try:
-            os.kill(self.pid, 0)
-            return True
-        except OSError:
-            return False
+        return self._host.is_alive(self.pid)
 
     def terminate(self) -> None:
-        """SIGTERM the child. The reader thread observes EOF, reaps it, and
-        calls its on_close (registry cleanup)."""
-        try:
-            os.kill(self.pid, signal.SIGTERM)
-        except OSError:
-            pass
+        """Signal the child to exit. The reader thread observes EOF, reaps
+        it, and calls its on_close (registry cleanup)."""
+        self._host.terminate(self.pid)
 
     def start_reader(self, on_close) -> None:
         """Start the persistent read thread. Forwards stdout to the current
@@ -255,13 +243,7 @@ class PtyTerminal:
     def _reap(self) -> int:
         """Reap this terminal's own child (never `-1`, which could steal
         another PtyTerminal's child in a multi-session registry)."""
-        try:
-            _, status = os.waitpid(self.pid, 0)
-        except OSError:
-            return -1
-        if os.WIFEXITED(status):
-            return os.WEXITSTATUS(status)
-        return -1
+        return self._host.reap(self.pid)
 
 
 def spawn_harness(
@@ -295,29 +277,9 @@ def spawn_harness(
     cwd_arg = cwd or os.getcwd()
     cmd = harness.build_command(harness_name, session_id, cwd_arg, provider, model, effort)
 
-    pid, fd = pty.fork()
-    if pid == 0:
-        # Child: apply provider env overrides, set terminal size, chdir, exec.
-        if env:
-            for key, val in env.items():
-                os.environ[key] = val
-        try:
-            fcntl.ioctl(0, termios.TIOCSWINSZ, _winsz(rows, cols))
-        except OSError:
-            pass
-        if cwd:
-            try:
-                os.chdir(cwd)
-            except OSError:
-                pass
-        os.execvp(cmd[0], cmd)
-        os._exit(127)  # exec failed
-
-    # Parent: set master pty size too.
-    try:
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, _winsz(rows, cols))
-    except OSError:
-        pass
+    host = host_runtime.get_host_runtime()
+    cmd[0] = host.resolve_executable(cmd[0])
+    fd, pid = host.spawn_pty(cmd, cwd, env, rows, cols)
 
     return PtyTerminal(
         fd=fd,
@@ -328,6 +290,7 @@ def spawn_harness(
         output_observer=output_observer,
         input_observer=input_observer,
         close_observer=close_observer,
+        host=host,
     )
 
 
