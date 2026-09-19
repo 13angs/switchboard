@@ -35,6 +35,20 @@ export async function fetchRichTranscript(
   return fetchTranscript(sessionId, since, 'rich') as Promise<unknown> as Promise<RichTranscript>;
 }
 
+/** Submit semantic text to a running session; the server owns harness input. */
+export async function sendSessionMessage(sessionId: string, text: string): Promise<OkResponse> {
+  const res = await fetch(`${BASE}/session/${encodeURIComponent(sessionId)}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `message ${res.status}`);
+  }
+  return res.json();
+}
+
 /** Tool-call timeline for one session (ADR-0017 §SD1). Not polled. */
 export async function fetchTimeline(sessionId: string): Promise<TimelineResponse> {
   const res = await fetch(`${BASE}/session/${encodeURIComponent(sessionId)}/timeline`);

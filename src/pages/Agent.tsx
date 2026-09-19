@@ -8,10 +8,10 @@ import { StatusBar } from '../components/shared/StatusBar';
 import { TerminalBody } from '../components/terminal/TerminalBody';
 import { FilesPanel } from '../components/terminal/FilesPanel';
 import { TimelinePanel } from '../components/terminal/TimelinePanel';
-import { StateBanner } from '../components/chat/StateBanner';
 import { MessageList } from '../components/chat/MessageList';
 import { RawJsonView } from '../components/chat/RawJsonView';
-import { ReadOnlyBar } from '../components/chat/ReadOnlyBar';
+import { ChatStatusBar } from '../components/chat/ChatStatusBar';
+import { SessionChat } from '../components/chat/SessionChat';
 import { FileNavigator } from '../components/files/FileNavigator';
 import {
   fetchBoardState,
@@ -642,15 +642,12 @@ export function AgentPage() {
             </div>
           )}
 
-          <div className={`agent-pane chat-body${agentView === 'chat' ? ' active' : ''}`}>
-            <StateBanner state={chatState} errorMessage={errorMsg} />
-            {showRawJson ? (
-              <RawJsonView messages={messages} />
-            ) : (
-              <MessageList messages={messages} typing={typing} />
-            )}
-            <div className="chat-bottom">
-              <ReadOnlyBar
+          <div className={`agent-pane${agentView === 'chat' ? ' active' : ''}`}>
+            <SessionChat sessionId={sessionId} external={{
+              messages, state: chatState, error: errorMsg, typing,
+              refresh: () => void refreshTranscript(),
+              content: showRawJson ? <RawJsonView messages={messages} /> : <MessageList messages={messages} typing={typing} />,
+              footer: <div className="chat-bottom"><ChatStatusBar
                 state={typing ? 'working' : ended ? 'ended' : chatState}
                 sessionId={sessionId}
                 costUsd={displaySession.total_cost_usd}
@@ -663,8 +660,8 @@ export function AgentPage() {
                 }
                 showJson={showRawJson}
                 onSwitchToTerminal={() => switchAgentView('terminal')}
-              />
-            </div>
+              /></div>,
+            }} />
           </div>
 
           {agentView === 'files' && (

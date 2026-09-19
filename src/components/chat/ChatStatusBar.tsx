@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import { costDisplay } from '../../lib/format';
 
-interface ReadOnlyBarProps {
+interface ChatStatusBarProps {
   state: 'connecting' | 'loading' | 'ended' | 'error' | 'ready' | 'working' | null;
   sessionId: string | null;
   /** Session running cost — hidden when there is no usage data (ADR-0007).
@@ -19,7 +19,7 @@ interface ReadOnlyBarProps {
   onSwitchToTerminal: () => void;
 }
 
-export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
+export const ChatStatusBar: FC<ChatStatusBarProps> = ({
   state,
   sessionId,
   costUsd,
@@ -73,10 +73,10 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
       default:
         return (
           <>
-            <span className="ro-status-text">📖 Read-only transcript</span>
+            <span className="ro-status-text">Session chat</span>
             <span className="ro-sep">·</span>
             <button className="ro-switch-link" onClick={onSwitchToTerminal}>
-              Switch to Terminal to interact
+              Open Terminal
             </button>
           </>
         );
@@ -86,7 +86,7 @@ export const ReadOnlyBar: FC<ReadOnlyBarProps> = ({
   const cost = costDisplay(costUsd, costPartial, unpricedModels, ratesCheckedOn); // null → hidden
 
   return (
-    <div className="readonly-bar">
+    <div className="chat-status-bar">
       <span className="ro-main">{getContent()}</span>
       {(cost || onExport || onToggleJson) && (
         <span className="ro-right">

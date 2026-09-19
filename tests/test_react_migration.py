@@ -93,21 +93,19 @@ class ServeStaticTest(unittest.TestCase):
         self.assertGreater(chat_input_idx, center_idx)
         self.assertLess(chat_input_idx, right_drawer_idx)
 
-    def test_chat_is_read_only_reads_transcript_from_poll_not_ptysend(self):
-        """ADR-0005: chat is a read-only transcript viewer — no send path, no
-        ChatInput, replaced by ReadOnlyBar. The transcript poll is the sole
-        message source."""
+    def test_chat_reuses_interactive_surface_and_keeps_transcript_authoritative(self):
+        """ADR-0051: Agent and Board share chat; sends do not append fake turns."""
         agent = (ROOT / "src" / "pages" / "Agent.tsx").read_text()
+        board = (ROOT / "src" / "pages" / "Board.tsx").read_text()
+        chat = (ROOT / "src" / "components" / "chat" / "SessionChat.tsx").read_text()
 
-        # No optimistic append or send path
-        self.assertNotIn("const userMsg", agent)
         self.assertNotIn("setMessages((prev) => [...prev, userMsg])", agent)
-        self.assertNotIn("sendMessage", agent)
-        self.assertNotIn("ChatInput", agent)
-
-        # ReadOnlyBar replaces ChatInput (read-only transcript viewer — ADR-0005)
-        self.assertIn("ReadOnlyBar", agent)
-        self.assertIn("onSwitchToTerminal", agent)
+        self.assertIn("<SessionChat sessionId={sessionId}", agent)
+        self.assertIn("<SessionChatDialog card={chatCard}", board)
+        self.assertIn("setChatCard(card)", board)
+        self.assertNotIn("window.open(sessionUrl('chat'", board)
+        self.assertIn("fetchRichTranscript(sessionId)", chat)
+        self.assertIn("<ChatComposer", chat)
 
     def test_chat_refreshes_transcript_while_harness_is_working(self):
         """Chat must keep following the shared PTY transcript between interval polls."""

@@ -1718,8 +1718,7 @@ def make_handler(repo_root: str):
                 )
 
         def _message(self, session_id: str):
-            """POST /session/<id>/message — write text to the session's PTY stdin.
-            v2.3: resumes via _get_or_spawn when not in registry (mirror terminal)."""
+            """POST /session/<id>/message — write only to an existing PTY."""
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length <= 0:
                 self._json(400, {"error": "empty body"})
@@ -1738,25 +1737,9 @@ def make_handler(repo_root: str):
             with _reg_lock:
                 term = _registry.get(session_id)
 
-            # v2.3: resume on send — if the session is not in the registry,
-            # spawn it via _get_or_spawn (mirror terminal WS) so the "Chat"
-            # button on an existing idle session works.
             if term is None:
-                harness_name, provider, cwd = _resolve_session_runtime(
-                    session_id, repo_root
-                )
-                try:
-                    child_env = harness.provider_env(harness_name, provider, _ENV_FILE)
-                except ValueError as e:
-                    self._json(400, {"error": str(e)})
-                    return
-                try:
-                    term, _reused = _get_or_spawn(
-                        session_id, cwd, harness_name, provider, child_env
-                    )
-                except lock.SessionBusy as e:
-                    self._json(409, {"error": str(e)})
-                    return
+                self._json(409, {"error": "session has no active PTY; open Terminal to resume it"})
+                return
 
             if not term.is_alive():
                 self._json(410, {"error": "session ended"})

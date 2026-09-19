@@ -12,6 +12,7 @@ import { useToast, ToastContainer } from '../components/shared/Toast';
 import { Header } from '../components/board/Header';
 import { BoardGrid } from '../components/board/BoardGrid';
 import { NewSessionDialog } from '../components/board/NewSessionDialog';
+import { SessionChatDialog } from '../components/chat/SessionChatDialog';
 import type { SessionCard } from '../lib/types';
 import './Board.css';
 
@@ -31,6 +32,7 @@ export function Board() {
   const [view, setView] = useState<'active' | 'archive'>('active');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [chatCard, setChatCard] = useState<SessionCard | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [transcripts, setTranscripts] = useState<
     Record<string, { role: string; text: string; ts: string }[] | null>
@@ -80,7 +82,7 @@ export function Board() {
 
   const openChat = useCallback((card: SessionCard) => {
     notifications.markSessionRead(card.session_id);
-    window.open(sessionUrl('chat', card), '_blank');
+    setChatCard(card);
   }, [notifications]);
 
   const openTerminal = useCallback((card: SessionCard) => {
@@ -182,8 +184,7 @@ export function Board() {
   const startSession = useCallback(
     (harness: string, provider: string, label: string) => {
       setDialogOpen(false);
-      // New sessions always open in the terminal — the sole interaction
-      // surface (ADR-0005). Chat is a transcript viewer for existing sessions.
+      // New sessions start in Terminal; Board Chat continues existing sessions.
       let url = `/agent?view=terminal&harness=${encodeURIComponent(harness)}&provider=${encodeURIComponent(provider)}`;
       if (label) url += `&label=${encodeURIComponent(label)}`;
       window.open(url, '_blank');
@@ -265,6 +266,8 @@ export function Board() {
           launchers={state?.launchers ?? [{ harness: 'claude', providers: state?.providers ?? ['claude'] }]}
         />
       )}
+
+      {chatCard && <SessionChatDialog card={chatCard} onClose={() => setChatCard(null)} />}
 
       <ToastContainer toasts={toasts} />
     </>

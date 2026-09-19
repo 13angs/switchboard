@@ -17,6 +17,7 @@ Run:
 from __future__ import annotations
 
 import http.client
+import json
 import os
 import subprocess
 import sys
@@ -78,6 +79,16 @@ def test_agent_routes():
             assert r.status == 302, f"/terminal must 302, got {r.status}"
             assert loc == "/agent?view=terminal&session_id=abc&harness=claude", loc
             r.read()
+
+            # Chat must never resume or spawn a PTY just because Send was
+            # pressed against a session without an active process.
+            conn = http.client.HTTPConnection("127.0.0.1", _PORT, timeout=5)
+            conn.request("POST", "/session/missing-pty/message",
+                         body=json.dumps({"text": "hello"}),
+                         headers={"Content-Type": "application/json"})
+            r = conn.getresponse()
+            body = json.loads(r.read())
+            assert r.status == 409 and "active PTY" in body["error"], (r.status, body)
 
             r = _get("/terminal")
             assert (r.status, r.getheader("Location")) == (
