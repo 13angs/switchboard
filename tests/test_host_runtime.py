@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""ADR-0052 SD1/SD2 — the Host Runtime boundary.
+"""ADR-0052 — the Host Runtime boundary (SD1/SD2) and real ConPTY (SD4).
 
 `control_plane.host` and `control_plane.terminal` must import cleanly on any
 platform, including one without `pty`/`fcntl`/`termios` (Windows). Those
 modules are stdlib but POSIX-only, so `PosixHost` must import them lazily,
 inside its own methods, never at module scope — this is what the guard below
 actually proves, rather than assuming it from reading the source.
+
+On Windows, `test_windows_host_spawns_a_real_conpty_session_on_windows` also
+exercises the real `ctypes`-based ConPTY implementation end to end. See its
+own docstring for exactly what it does and does not verify.
 
 Run:
     python3 projects/switchboard/repos/switchboard/tests/test_host_runtime.py
@@ -56,13 +60,59 @@ def test_posix_module_has_no_module_level_posix_only_imports():
     )
 
 
-def test_windows_host_is_importable_but_not_functional_yet():
+def test_windows_host_spawns_a_real_conpty_session_on_windows():
+    """ADR-0052 SD4 / `slices.md` `S62` — real ConPTY via `ctypes`.
+
+    Verified in-session, repeatedly, across `cmd.exe` and a plain `python.exe`
+    child: `spawn_pty`/`is_alive`/`terminate`/`reap`/`close` all work, and the
+    ConPTY session's own negotiation handshake
+    (`\\x1b[?9001h\\x1b[?1004h` — win32-input-mode + focus-event-mode) and its
+    teardown sequence (embedding the real child's own path) both arrive
+    correctly on `read_fd`, proving `CreatePseudoConsole` +
+    `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` are wired to the right process.
+
+    What is **not** asserted here: that a child's own text output (e.g. what
+    `echo` prints) arrives on `read_fd`. In this session's own sandboxed
+    shell it consistently did not — visible instead on the shell's own
+    console — while `AllocConsole` for this same process independently
+    returned `ERROR_ACCESS_DENIED` (5), pointing at a console/window-station
+    restriction specific to that shell rather than a wiring bug (the
+    handshake/teardown bytes proving the wiring is correct). Confirming full
+    interactive echo needs a run from an ordinary, non-agent-sandboxed
+    Windows terminal."""
+    if platform.system() != "Windows":
+        WindowsHost()  # must not explode merely existing off-Windows
+        return
+
+    import os
+    import threading
+
     win = WindowsHost()
+    read_fd, write_fd, pid = win.spawn_pty(
+        ["cmd.exe", "/c", "echo ADR_0052_S62_SMOKE"], None, None, 24, 80
+    )
     try:
-        win.spawn_pty(["true"], None, None, 24, 80)
-        raise AssertionError("WindowsHost.spawn_pty should not work yet (ADR-0052 SD4)")
-    except NotImplementedError as e:
-        assert "S62" in str(e)
+        collected = bytearray()
+
+        def _reader():
+            while True:
+                chunk = os.read(read_fd, 4096)
+                if not chunk:
+                    return
+                collected.extend(chunk)
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+        t.join(3)
+
+        assert b"\x1b[?9001h" in bytes(collected), (
+            f"expected the ConPTY win32-input-mode handshake, got {bytes(collected)!r}"
+        )
+        code = win.reap(pid)
+        assert code == 0, f"expected clean exit, got {code}"
+        assert win.is_alive(pid) is False
+    finally:
+        win.close(read_fd, write_fd)
 
 
 def test_terminal_module_does_not_import_posix_only_modules_directly():

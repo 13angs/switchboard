@@ -56,7 +56,8 @@ class PtyTerminal:
     """A PTY child process whose stdout is routed to a swappable subscriber.
 
     Attributes:
-        fd: master PTY file descriptor
+        fd: PTY read fd (POSIX: the bidirectional master fd; Windows: ConPTY's
+            output pipe — see `control_plane.host.HostRuntime.spawn_pty`)
         pid: child process PID
         session_id: Claude session id (may be set later for fresh sessions)
         attach_key: server-assigned key that identifies this PTY from the
@@ -78,8 +79,10 @@ class PtyTerminal:
         input_observer: Optional[Callable[["PtyTerminal", bytes], None]] = None,
         close_observer: Optional[Callable[["PtyTerminal"], None]] = None,
         host: Optional[host_runtime.HostRuntime] = None,
+        write_fd: Optional[int] = None,
     ):
         self.fd = fd
+        self._write_fd = write_fd if write_fd is not None else fd
         self.pid = pid
         self._host = host or host_runtime.get_host_runtime()
         self.session_id = session_id
@@ -172,7 +175,7 @@ class PtyTerminal:
 
     def write(self, data: bytes) -> None:
         try:
-            os.write(self.fd, data)
+            os.write(self._write_fd, data)
         except OSError:
             return
         if self._input_observer:
@@ -232,10 +235,7 @@ class PtyTerminal:
                     on_close(self)
                 except Exception:
                     pass
-                try:
-                    os.close(self.fd)
-                except OSError:
-                    pass
+                self._host.close(self.fd, self._write_fd)
 
         self._reader = threading.Thread(target=run, daemon=True)
         self._reader.start()
@@ -279,10 +279,11 @@ def spawn_harness(
 
     host = host_runtime.get_host_runtime()
     cmd[0] = host.resolve_executable(cmd[0])
-    fd, pid = host.spawn_pty(cmd, cwd, env, rows, cols)
+    read_fd, write_fd, pid = host.spawn_pty(cmd, cwd, env, rows, cols)
 
     return PtyTerminal(
-        fd=fd,
+        fd=read_fd,
+        write_fd=write_fd,
         pid=pid,
         session_id=session_id,
         harness_name=harness_name,
