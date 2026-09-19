@@ -10,6 +10,7 @@ __all__ = [
     "claude_store",
     "codex_store",
     "harness",
+    "host",
     "gh",
     "discovery",
     "state",
