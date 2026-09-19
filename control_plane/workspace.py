@@ -336,6 +336,8 @@ def _head_sha(root: Path) -> str:
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
@@ -364,6 +366,8 @@ def _previous_slices_text(root: Path, slices_path: Path) -> Optional[str]:
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
@@ -377,6 +381,8 @@ def _previous_slices_text(root: Path, slices_path: Path) -> Optional[str]:
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
@@ -485,6 +491,8 @@ def _open_task_branches(root: Path) -> list[str]:
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             env={**os.environ, "GH_PROMPT_DISABLED": "1"},
         )
@@ -517,6 +525,8 @@ def _show_at_branch(root: Path, branch: str, rel_path: str) -> Optional[str]:
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):

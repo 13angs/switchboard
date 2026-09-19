@@ -189,6 +189,45 @@ def test_cache_serves_same_head_and_refreshes_after_commit(tmp_path):
     assert second["projects"][0]["has"]["risks"] is True
 
 
+def test_previous_slices_text_pins_utf8_decoding(tmp_path, monkeypatch):
+    """A Windows box can default text-mode subprocess decoding to the system
+    ANSI codepage (observed: `cp874` on a Thai-locale machine) instead of
+    UTF-8, even though `git` always emits UTF-8 — this crashed board reads
+    against a real Thai `slices.md` (found while running this server natively
+    on Windows, ADR-0052 follow-up). `locale.getpreferredencoding()` cannot be
+    forced deterministically from a test — Python's UTF-8 mode (on by default
+    on this test runner) overrides it outright — so this pins the actual
+    contract instead: `_previous_slices_text`'s `git show` call must always
+    pass `encoding="utf-8"` explicitly rather than trust the ambient default."""
+    captured = {}
+    real_run = subprocess.run
+
+    def _spy(*args, **kwargs):
+        if args and args[0][:2] == ["git", "show"]:
+            captured.update(kwargs)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(workspace.subprocess, "run", _spy)
+
+    repo = _repo(tmp_path)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "one")
+
+    slices_path = repo / "projects" / "demo" / "slices.md"
+    slices_path.write_text(SLICES + "\n| **M5** | แถวใหม่ | — | ⬜ | ทดสอบ | |\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "two")
+
+    result = workspace._previous_slices_text(repo, slices_path)
+
+    assert result is not None
+    assert "ชิ้น" in result
+    assert captured.get("encoding") == "utf-8", captured
+
+
 # ── `blocked-by` column (S38, row-status.md § ลำดับก่อนหลัง, W22) ────────────
 
 BLOCKED_SLICES = """---

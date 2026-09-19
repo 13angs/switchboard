@@ -179,6 +179,8 @@ def _git(cwd: Path, *args: str) -> Optional[str]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
