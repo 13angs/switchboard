@@ -170,6 +170,18 @@ assert(
   'a belt nobody declared still gets a chip — its rows have to be reachable',
 );
 
+assert(
+  columnOf(stranger, { mode: 'workflow', workflow: 'marketing', kind: '' }) ===
+    UNSTAGED.key,
+  'a row on an undeclared belt is unplaced, never sent to a column that view does not render',
+);
+assert(
+  columnsFor({ mode: 'workflow', workflow: 'marketing', kind: '' }, REGISTRY).some(
+    (c) => c.key === UNSTAGED.key,
+  ),
+  'and the column it lands in is one that belt actually renders',
+);
+
 // ── chips come from the rows in front of you, not from the whole register ───
 const chips = chipsFor([project([devProject, opsRoutine])], REGISTRY);
 assert(

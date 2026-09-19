@@ -176,6 +176,14 @@ export function columnOf(
   siblings: readonly WorkspaceSlice[] = [],
 ): string {
   if (view.mode !== 'workflow') return slice.column;
+  // A belt the register does not have has no stations to place a row on, and
+  // the row's own `stage` text is a station of a belt nobody declared. Placing
+  // it by that text would put the card in a column this view does not render,
+  // which drops it off the board — the one thing §SD4 forbids. It is unplaced,
+  // which is the honest answer, and its ⚠ badge says why.
+  // Found by driving the real page, not by a unit check: the card simply was
+  // not there, and every count still added up.
+  if (slice.workflow_known === false) return UNSTAGED.key;
   if (slice.stage) return slice.stage;
   if (!slice.part_of) return UNSTAGED.key;
   // One hop, never a chain: `part-of` names a parent, and route-lint Check 10
