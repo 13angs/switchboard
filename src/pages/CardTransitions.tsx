@@ -6,12 +6,8 @@ import {
   type TransitionCandidate,
   type TransitionPublished,
 } from '../lib/api';
-import { BELT_COLUMNS } from '../lib/belt';
+import { stationLabel } from '../lib/belt';
 import { formShapeFor, type FormShape } from '../lib/transition-form';
-
-const STAGE_LABEL: Record<string, string> = Object.fromEntries(
-  BELT_COLUMNS.map((c) => [c.key, c.label]),
-);
 
 /**
  * The forward-handoff buttons on one belt card (slices.md S43a–S43c). Reads
@@ -129,14 +125,14 @@ export function CardTransitions({
           key={m.to_stage}
           className={`transition-btn${m.allowed ? '' : ' off'}`}
           disabled={!m.allowed || sending !== null}
-          title={m.allowed ? `ส่งต่อไป ${STAGE_LABEL[m.to_stage] ?? m.to_stage}` : m.reason ?? ''}
+          title={m.allowed ? `ส่งต่อไป ${stationLabel(m.to_stage)}` : m.reason ?? ''}
           onClick={() => {
             const shape = formShapeFor(stage, m.to_stage);
             if (shape === 'none') send(m.to_stage, {});
             else setPendingForm({ toStage: m.to_stage, shape });
           }}
         >
-          {sending === m.to_stage ? 'กำลังส่ง…' : `→ ${STAGE_LABEL[m.to_stage] ?? m.to_stage}`}
+          {sending === m.to_stage ? 'กำลังส่ง…' : `→ ${stationLabel(m.to_stage)}`}
         </button>
       ))}
       {error && <span className="transition-error">{error}</span>}
@@ -201,11 +197,11 @@ function TransitionFormDialog({
         className="dlg"
         role="dialog"
         aria-modal="true"
-        aria-label={`ส่งต่อไป ${STAGE_LABEL[toStage] ?? toStage}`}
+        aria-label={`ส่งต่อไป ${stationLabel(toStage)}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dlg-head">
-          <h3>ส่งต่อไป · {STAGE_LABEL[toStage] ?? toStage}</h3>
+          <h3>ส่งต่อไป · {stationLabel(toStage)}</h3>
           <button className="dlg-x" onClick={onCancel} aria-label="ปิด">
             ✕
           </button>

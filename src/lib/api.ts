@@ -215,10 +215,27 @@ export interface WorkspaceSlice {
    *  compare against. The board announces this itself; nothing writes it
    *  back to `slices.md`. */
   handoff: { from: string; to: string } | null;
-  /** Opt-in `stage` column — one of the nine belt stations, or `""` when the
-   *  file has no such column, the cell is blank, or the value is not a
-   *  declared station (row-status.md § สายพาน · route-lint Check 9). */
+  /** Opt-in `stage` column — a station of THIS ROW'S belt, or `""` when the
+   *  file has no such column, the cell is blank, or the value is not a station
+   *  that belt declares (row-status.md § สายพาน · route-lint Check 9).
+   *  Kept raw when `workflow_known` is false: a station cannot be judged
+   *  against a belt the register does not have (ADR-0051 §SD4). */
   stage: string;
+  /** Opt-in `workflow` column — which belt this row walks. `"dev"` when the
+   *  row names a station and no belt (ADR-0051 §SD4), `""` when it names
+   *  neither. */
+  workflow: string;
+  /** False when `workflow` names a belt the register does not have. The card
+   *  still renders, with its raw value and a flag — route-lint Check 12 is
+   *  what fails the PR, not the board (§SD4). */
+  workflow_known: boolean;
+  /** Opt-in `kind` column — `project` / `routine`, or `""`. Independent of
+   *  `workflow`: a `routine` on the `dev` belt is a dependency audit that
+   *  ships a PR (meta/adr-slices-work-model-2026-09.md §SD3). */
+  kind: string;
+  /** False when `kind` is outside the register's set. Same posture as
+   *  `workflow_known`. */
+  kind_known: boolean;
   /** Opt-in `part-of` column — the `#` of the row this one is an acceptance
    *  criterion OF. `""` when this row is a card in its own right. */
   part_of: string;
@@ -438,12 +455,31 @@ export interface WorkspaceRegister {
   };
 }
 
+/** The workspace's own register of belts (ADR-0051 §SD1).
+ *
+ *  Read from `team-os/ways-of-working/workflows.md` at request time, never
+ *  mirrored in this app: adding a belt is a table row upstream. `degraded`
+ *  means the register could not be read and the reader is standing in the
+ *  `dev` belt so the board behaves as it did before the register existed —
+ *  `reason` says why, and the page says so on screen.
+ */
+export interface BeltRegistry {
+  source: string;
+  degraded: boolean;
+  reason: string;
+  /** Belt key → its label and its stations IN ORDER. Order is the belt's
+   *  meaning, so this is a list, never a set. */
+  workflows: Record<string, { label: string; stages: string[] }>;
+  kinds: string[];
+}
+
 export interface WorkspaceResponse {
   generated_at: string;
   repo: string;
   head: string;
   stale_by: string;
   slots: WorkspaceSlots;
+  belt: BeltRegistry;
   projects: WorkspaceProject[];
   totals: {
     projects_with_slices: number;

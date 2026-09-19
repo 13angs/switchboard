@@ -77,6 +77,36 @@ STAGE_ORDER = (
 )
 _STAGES = frozenset(STAGE_ORDER)
 
+# --- the belt registry (ADR-0051 §SD1) -------------------------------------
+# `stage` stopped being a workspace-wide vocabulary on 2026-09-19
+# (meta/adr-slices-work-model-2026-09.md §SD1): the nine stations above are the
+# `dev` belt's, and a row names which belt it is on with an opt-in `workflow`
+# column. The register of belts lives in team-os/ways-of-working/workflows.md
+# and is PARSED, never mirrored here — adding a belt is a table row upstream,
+# not a release of this app (§SD2 of the same ADR, and route-lint Check 12
+# reads the identical tables).
+#
+# Found by column headers, exactly like _STAGE_COLUMNS below and for the same
+# reason: `workflow` / `stages` / `kind` are English keywords the tables own,
+# while every heading around them is Thai prose that stays free to reword.
+_WORKFLOWS_FILE = ("team-os", "ways-of-working", "workflows.md")
+_WORKFLOW_COLUMNS = ("workflow", "stages")
+_KIND_COLUMN = "kind"
+
+# The belt a row is on when it declares a station and no belt. Not a guess: the
+# three registers that adopted `stage` before the registry existed carry no
+# `workflow` column at all, and §SD4 makes `dev` their reading.
+DEFAULT_WORKFLOW = "dev"
+
+# Degraded mode, same discipline as FALLBACK_SLOTS below: a board pointed at a
+# workspace whose registry has not landed yet must render exactly what it
+# rendered yesterday, and say on screen that it is reading a fallback. Crashing
+# discovery over a missing rule file is the one thing this reader must not do.
+FALLBACK_WORKFLOWS: dict[str, dict] = {
+    DEFAULT_WORKFLOW: {"label": "Software Delivery", "stages": list(STAGE_ORDER)}
+}
+FALLBACK_KINDS = ("project", "routine")
+
 # A row with an open PR lives on this branch prefix (`transition._BRANCH_PREFIX`,
 # ADR-0044 §SD1) — used only to filter `gh pr list` noise, never to reconstruct
 # a branch name (client/actor_role are not recoverable from a row alone).
@@ -133,9 +163,25 @@ class Slice:
     # the "before"). Set by `_attach_default_roles`, never by `_parse_slices`:
     # the raw cell alone cannot say what it resolved to last time.
     handoff: Optional[dict] = None
-    # Opt-in `stage` column — one of STAGE_ORDER, or "" when the file has no
-    # such column / the cell is blank / the value is not a declared station.
+    # Opt-in `stage` column — a station OF THIS ROW'S BELT, or "" when the file
+    # has no such column / the cell is blank / the value is not a station the
+    # row's belt declares. Judged against `workflow`, not against one
+    # workspace-wide list (ADR-0051 §SD1).
     stage: str = ""
+    # Opt-in `workflow` column — which belt this row walks. `dev` when the row
+    # declares a station and no belt (§SD4), "" when it declares neither.
+    # When the cell names a belt the registry does not have, the RAW value is
+    # kept and `workflow_known` is False: the board shows what it read and
+    # flags it, it does not substitute `dev` and it does not drop the card
+    # (§SD4).
+    workflow: str = ""
+    workflow_known: bool = True
+    # Opt-in `kind` column — `project` / `routine` per the registry, or "" when
+    # not declared. Independent of `workflow` on purpose (workspace ADR §SD3):
+    # a `routine` on the `dev` belt is a dependency audit that ships a PR, not
+    # a contradiction, so nothing here cross-validates the two.
+    kind: str = ""
+    kind_known: bool = True
     # Opt-in `part-of` column — the `#` of the row this one is an acceptance
     # criterion OF. "" when this row is a card in its own right.
     part_of: str = ""
@@ -145,8 +191,10 @@ class Slice:
     # assembled at DISPLAY time; the file still holds one criterion per row).
     criteria: Optional[dict] = None
     # The two axes disagreeing (meta/adr-slices-stage-axis-2026-09.md §SD3):
-    # "stuck-open"  — belt says done, the glyph says the row is still open
-    # "skipped-gate" — the glyph says closed from a station that is not `done`
+    # "stuck-open"  — belt is at its LAST station, the glyph says still open
+    # "skipped-gate" — the glyph says closed from a station that is not the last
+    # "Last station" is read from the belt, never assumed to be `done`
+    # (ADR-0051 §SD5) — it happens to be `done` on all three belts today.
     # `None` when they agree or when one of them is not declared. The board
     # prints this; it never writes a correction back.
     axis_conflict: Optional[str] = None
@@ -175,7 +223,8 @@ def workspace_overview(
             return cached[1]
 
     slots = project_slots(root)
-    projects = _scan_projects(root, slots)
+    registry = belt_registry(root)
+    projects = _scan_projects(root, slots, registry)
     dispatch = _scan_dispatch(root)
     _attach_default_roles(root, projects, dispatch)
     # ADR-0041 §SD1 — both belt columns are functions of HEAD, so they ride the
@@ -189,6 +238,10 @@ def workspace_overview(
         "head": head,
         "stale_by": "one merged PR — this view reads committed files only",
         "slots": slots,
+        # ADR-0051 §SD1 — the page needs the same register the parse used:
+        # which belts exist, their stations IN ORDER, and the `kind` set. It
+        # rides the HEAD-cached payload because it is a function of the tree.
+        "belt": registry,
         "projects": projects,
         "totals": _totals(projects),
         "gaps": _scan_gaps(root),
@@ -356,7 +409,9 @@ def _collect_handoffs(projects: list[dict]) -> list[dict]:
     return out
 
 
-def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
+def _scan_projects(
+    root: Path, slots: Optional[dict] = None, registry: Optional[dict] = None
+) -> list[dict]:
     """Every projects/<name>/ that carries a slices.md, plus what it is missing.
 
     `has` follows the slots team-os declares (ADR-0040 §SD4) rather than three
@@ -369,6 +424,8 @@ def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
         return []
     if slots is None:
         slots = project_slots(root)
+    if registry is None:
+        registry = belt_registry(root)
 
     # ADR-0044 §SD6 — one `gh pr list` for the whole scan, not one per project:
     # a row's own branch is not a function of `main`'s HEAD, so this is read
@@ -384,7 +441,7 @@ def _scan_projects(root: Path, slots: Optional[dict] = None) -> list[dict]:
         slices_file = child / "slices.md"
         if not slices_file.is_file():
             continue
-        slices = _parse_slices(slices_file)
+        slices = _parse_slices(slices_file, registry)
         slices = _overlay_open_branches(root, child.name, slices, branches)
         owns = _frontmatter(slices_file)
         found.append(
@@ -615,7 +672,7 @@ def _frontmatter(path: Path) -> dict[str, str]:
     return out
 
 
-def _parse_slices(path: Path) -> list[Slice]:
+def _parse_slices(path: Path, registry: Optional[dict] = None) -> list[Slice]:
     """Rows of the first markdown table in slices.md.
 
     Deliberately positional rather than header-driven: the files are Thai prose
@@ -640,15 +697,24 @@ def _parse_slices(path: Path) -> list[Slice]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    return _parse_slices_text(text)
+    return _parse_slices_text(text, registry)
 
 
-def _parse_slices_text(text: str) -> list[Slice]:
+def _parse_slices_text(text: str, registry: Optional[dict] = None) -> list[Slice]:
     """Same table walk as `_parse_slices`, given text instead of a path.
 
     Split out for S40: a handoff check needs to run this same parse against a
     `git show` snapshot of an older commit, which has no path on disk.
+
+    `registry` is `belt_registry()` output. Defaulted rather than required so
+    the S40 snapshot walk and every existing caller keep working unchanged; the
+    default is the degraded one-belt registry, which is the pre-2026-09-19
+    behaviour exactly.
     """
+    if registry is None:
+        registry = _fallback_registry("/".join(_WORKFLOWS_FILE), "registry not passed")
+    belts = registry.get("workflows", {})
+    kinds = set(registry.get("kinds") or FALLBACK_KINDS)
     # Rows are dicts rather than a widening tuple: this walk already grew from
     # 5 positional cells to 7 and then to 9, and positional coupling in this
     # file has drawn blood once already (a `|` inside a cell shifted every
@@ -659,6 +725,8 @@ def _parse_slices_text(text: str) -> list[Slice]:
     blocked_col: Optional[int] = None
     stage_col: Optional[int] = None
     part_of_col: Optional[int] = None
+    workflow_col: Optional[int] = None
+    kind_col: Optional[int] = None
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
@@ -683,6 +751,10 @@ def _parse_slices_text(text: str) -> list[Slice]:
                     stage_col = i
                 elif name == "part-of":
                     part_of_col = i
+                elif name == "workflow":
+                    workflow_col = i
+                elif name == "kind":
+                    kind_col = i
             continue
 
         ident = _strip_md(cells[0])
@@ -711,6 +783,35 @@ def _parse_slices_text(text: str) -> list[Slice]:
             if part_of_col is not None and part_of_col < len(cells)
             else ""
         )
+        workflow_raw = (
+            _strip_md(cells[workflow_col]).strip().lower()
+            if workflow_col is not None and workflow_col < len(cells)
+            else ""
+        )
+        kind_raw = (
+            _strip_md(cells[kind_col]).strip().lower()
+            if kind_col is not None and kind_col < len(cells)
+            else ""
+        )
+        if workflow_raw in _BLOCKED_EMPTY:
+            workflow_raw = ""
+        if kind_raw in _BLOCKED_EMPTY:
+            kind_raw = ""
+
+        # A belt the registry does not have keeps its raw value and a flag —
+        # never substituted, never dropped (ADR-0051 §SD4). Its station keeps
+        # its raw text too: judging it against a belt that does not exist would
+        # blank the cell and report the station as the mistake.
+        workflow_known = not workflow_raw or workflow_raw in belts
+        if not workflow_raw and stage:
+            workflow = DEFAULT_WORKFLOW  # §SD4 — a station implies the dev belt
+        else:
+            workflow = workflow_raw
+        if workflow_known and workflow:
+            stations = belts.get(workflow, {}).get("stages") or []
+            stage = stage if stage in stations else ""
+        elif not workflow:
+            stage = ""  # a station with no belt at all is unreadable
 
         raw_rows.append(
             {
@@ -721,8 +822,12 @@ def _parse_slices_text(text: str) -> list[Slice]:
                 "note": note,
                 "role": role,
                 "blocked_raw": blocked_raw,
-                "stage": stage if stage in _STAGES else "",
+                "stage": stage,
                 "part_of": "" if part_of in _BLOCKED_EMPTY else part_of,
+                "workflow": workflow,
+                "workflow_known": workflow_known,
+                "kind": kind_raw,
+                "kind_known": not kind_raw or kind_raw in kinds,
             }
         )
 
@@ -750,8 +855,16 @@ def _parse_slices_text(text: str) -> list[Slice]:
                 ),
                 stage=r["stage"],
                 part_of=r["part_of"],
+                workflow=r["workflow"],
+                workflow_known=r["workflow_known"],
+                kind=r["kind"],
+                kind_known=r["kind_known"],
                 criteria=criteria_by_parent.get(r["id"]),
-                axis_conflict=_axis_conflict(r["stage"], column),
+                axis_conflict=_axis_conflict(
+                    r["stage"],
+                    column,
+                    last_station(registry, r["workflow"]) if r["workflow_known"] else "",
+                ),
             )
         )
     return rows
@@ -781,17 +894,22 @@ def _criteria(raw_rows: list[dict], columns_by_id: dict[str, str]) -> dict[str, 
     return out
 
 
-def _axis_conflict(stage: str, column: str) -> Optional[str]:
+def _axis_conflict(stage: str, column: str, final: str) -> Optional[str]:
     """Which way the two axes disagree, or None when they do not.
 
     Only ever computed from two declared values: a file without a `stage`
     column has one axis, and one axis cannot contradict itself.
+
+    `final` is the row's own belt's last station (ADR-0051 §SD5) — "" when the
+    belt is unreadable, which makes this abstain rather than guess. Comparing
+    against the literal `done` would have been right for all three belts today
+    and wrong for the first belt that ends anywhere else.
     """
-    if not stage:
+    if not stage or not final:
         return None
-    if stage == "done" and column != "done":
+    if stage == final and column != "done":
         return "stuck-open"
-    if column == "done" and stage != "done":
+    if column == "done" and stage != final:
         return "skipped-gate"
     return None
 
@@ -2052,6 +2170,124 @@ def _project_count(root: Path) -> int:
 
 def _cell_raw(cells: list[str], i: int) -> str:
     return cells[i] if i < len(cells) else ""
+
+
+def belt_registry(root: Path) -> dict:
+    """The belts a row may name, their stations in order, and the `kind` set.
+
+    Two tables in team-os/ways-of-working/workflows.md, chosen by their column
+    headers (`workflow`+`stages`, and `kind`) — never by the Thai headings
+    above them, same rule as `_stations`. Station ORDER is the belt's meaning,
+    so the stages cell is read as its backtick tokens *in sequence*.
+
+    Fails soft and says so. `degraded: True` means the registry could not be
+    read and FALLBACK_WORKFLOWS is standing in — the board then behaves exactly
+    as it did before the registry existed (one belt, the nine `dev` stations),
+    rather than blanking every station on screen. ADR-0051 § Consequences 1.
+    """
+    source = "/".join(_WORKFLOWS_FILE)
+    try:
+        text = root.joinpath(*_WORKFLOWS_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return _fallback_registry(source, f"ไม่พบ {source}")
+
+    tables = _markdown_tables(text)
+    found = _registry_table(tables, _WORKFLOW_COLUMNS)
+    if found is None:
+        return _fallback_registry(
+            source,
+            "ไม่พบตารางที่มีคอลัมน์ "
+            + " · ".join(f"`{c}`" for c in _WORKFLOW_COLUMNS)
+            + f" ใน {source}",
+        )
+    index, rows = found
+    # `label` is read if the table carries it and shrugged off if it does not:
+    # a belt with no label falls back to its own key, which is worse to look at
+    # but is not a reason to drop the whole register.
+    label_col = index.get("label")
+    workflows: dict[str, dict] = {}
+    for cells in rows:
+        keys = _CODE_TOKEN.findall(cells[index["workflow"]])
+        if not keys:
+            continue  # a prose row, or the separator — no backticked key
+        stages_at = index["stages"]
+        stages = (
+            _CODE_TOKEN.findall(cells[stages_at]) if stages_at < len(cells) else []
+        )
+        if not stages:
+            continue  # a belt with no stations is not a belt
+        label = (
+            _strip_md(cells[label_col]).strip()
+            if label_col is not None and label_col < len(cells)
+            else ""
+        )
+        workflows[keys[0]] = {"label": label or keys[0], "stages": stages}
+
+    if DEFAULT_WORKFLOW not in workflows:
+        # Every row that declares a station and no belt reads as `dev` (§SD4),
+        # so a registry without it cannot place the rows already in the tree.
+        return _fallback_registry(
+            source, f"ทะเบียนไม่มีสายพาน `{DEFAULT_WORKFLOW}` ใน {source}"
+        )
+
+    kinds: list[str] = []
+    kind_table = _registry_table(tables, (_KIND_COLUMN,))
+    if kind_table is not None:
+        kind_index, kind_rows = kind_table
+        for cells in kind_rows:
+            at = kind_index[_KIND_COLUMN]
+            if at >= len(cells):
+                continue
+            for token in _CODE_TOKEN.findall(cells[at]):
+                if token not in kinds:
+                    kinds.append(token)
+
+    return {
+        "source": source,
+        "degraded": False,
+        "reason": "",
+        "workflows": workflows,
+        "kinds": kinds or list(FALLBACK_KINDS),
+    }
+
+
+def _registry_table(
+    tables: list[tuple[list[str], list[list[str]]]], required: tuple[str, ...]
+) -> Optional[tuple[dict[str, int], list[list[str]]]]:
+    """First table carrying every `required` header, indexed by EVERY header.
+
+    Unlike `_table_by_columns`, which indexes only what it was asked for, this
+    hands back the whole header index — the registry needs `label`, which is
+    optional, and an index that omits it silently would print every belt under
+    its own key and look like the file said so.
+    """
+    for header, rows in tables:
+        index = {
+            _strip_md(cell).strip().lower(): i for i, cell in enumerate(header)
+        }
+        if all(column in index for column in required):
+            return index, rows
+    return None
+
+
+def _fallback_registry(source: str, reason: str) -> dict:
+    return {
+        "source": source,
+        "degraded": True,
+        "reason": reason,
+        "workflows": {k: dict(v) for k, v in FALLBACK_WORKFLOWS.items()},
+        "kinds": list(FALLBACK_KINDS),
+    }
+
+
+def last_station(registry: dict, workflow: str) -> str:
+    """The belt's final station — `done` on all three belts today, by accident.
+
+    Read rather than assumed: a belt whose last station is not spelled `done`
+    must still be able to say "ค้างไม่ปิด" about its own end (ADR-0051 §SD5).
+    """
+    stages = registry.get("workflows", {}).get(workflow, {}).get("stages") or []
+    return stages[-1] if stages else ""
 
 
 def _table_by_columns(
