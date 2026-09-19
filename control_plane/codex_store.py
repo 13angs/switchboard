@@ -86,6 +86,31 @@ def _turn_from_event(ev: dict) -> Optional[tuple[str, str, Optional[str]]]:
     return None
 
 
+def has_user_message_since(jsonl_path: Path, offset: int, text: str) -> bool:
+    """Confirm a new exact Codex user turn after a chat send.
+
+    Read only bytes appended after the send began. Counting parsed messages
+    would miss an identical repeat within the parser's deduplication window.
+    """
+    try:
+        with jsonl_path.open("rb") as stream:
+            stream.seek(offset)
+            appended = stream.read()
+    except OSError:
+        return False
+    for line in appended.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        turn = _turn_from_event(event)
+        if turn and turn[0] == "user" and turn[1] == text:
+            return True
+    return False
+
+
 def _seen_turn_duplicate(
     seen: dict[str, Optional[datetime]], text: str, ts: Optional[datetime]
 ) -> bool:

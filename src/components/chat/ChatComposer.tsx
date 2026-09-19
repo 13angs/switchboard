@@ -6,6 +6,7 @@ export function ChatComposer({ sessionId, onSent }: { sessionId: string; onSent:
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -23,6 +24,7 @@ export function ChatComposer({ sessionId, onSent }: { sessionId: string; onSent:
     } finally {
       pending.current = false;
       setSending(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
     }
   };
 
@@ -35,7 +37,7 @@ export function ChatComposer({ sessionId, onSent }: { sessionId: string; onSent:
 
   return (
     <form className="chat-composer" onSubmit={submit}>
-      <textarea aria-label="Write a message" placeholder="Write a message…" value={text}
+      <textarea ref={inputRef} aria-label="Write a message" placeholder="Write a message…" value={text}
         onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown}
         disabled={sending} rows={2} />
       <button type="submit" className="primary" disabled={sending || !text.trim()}>

@@ -305,6 +305,18 @@ def _chat_message_payload(text: str, harness_name: str) -> bytes:
     return (text + submit).encode("utf-8")
 
 
+def _write_chat_message(term: terminal.PtyTerminal, text: str) -> None:
+    """Write chat text and Enter as separate PTY inputs.
+
+    A combined write is read as a paste by the harness TUI, leaving the
+    apparent Enter inside its composer (the S24 dispatch failure). Give the
+    TUI time to consume the text before sending a real Enter event.
+    """
+    term.write(text.encode("utf-8"))
+    time.sleep(0.2)
+    term.write(_chat_message_payload("", term.harness))
+
+
 # How long to let a freshly spawned TUI draw its input box before typing into
 # it. Below this the keystrokes land before the box exists and are swallowed.
 _PROMPT_SETTLE_S = 1.5
@@ -1745,12 +1757,36 @@ def make_handler(repo_root: str):
                 self._json(410, {"error": "session ended"})
                 return
 
-            payload = _chat_message_payload(text, term.harness)
+            # Codex writes a session id before the first turn, so only a new
+            # user turn in its rollout proves that Enter really submitted.
+            codex_receipt = None
+            if term.harness == "codex":
+                path = codex_store.find_session_path(session_id)
+                if path is None:
+                    self._json(409, {"error": "Codex transcript unavailable; message was not sent"})
+                    return
+                try:
+                    codex_receipt = (path, path.stat().st_size)
+                except OSError:
+                    self._json(409, {"error": "Codex transcript unavailable; message was not sent"})
+                    return
             try:
-                term.write(payload)
+                _write_chat_message(term, text)
             except OSError as e:
                 self._json(500, {"error": f"stdin write failed: {e}"})
                 return
+
+            if codex_receipt is not None:
+                path, offset = codex_receipt
+                deadline = time.monotonic() + 8.0
+                while time.monotonic() < deadline:
+                    if codex_store.has_user_message_since(path, offset, text):
+                        break
+                    time.sleep(0.25)
+                else:
+                    self._json(504, {"error":
+                        "Send not confirmed; check Terminal before retrying"})
+                    return
 
             self._json(200, {"ok": True, "session_id": session_id})
 

@@ -198,6 +198,24 @@ def test_chat_message_payload_uses_terminal_submit_key_per_harness():
     assert srv_mod._chat_message_payload("hello", "codex") == b"hello\r"
 
 
+def test_chat_receipt_requires_new_exact_user_turn_even_for_repeated_text(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    _write_jsonl(rollout, [{"type": "event_msg", "payload": {
+        "type": "user_message", "message": "hello"}}])
+    offset = rollout.stat().st_size
+    assert not codex_store.has_user_message_since(rollout, offset, "hello")
+    with rollout.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}]}}) + "\n")
+    assert not codex_store.has_user_message_since(rollout, offset, "hello")
+    with rollout.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}]}}) + "\n")
+    assert codex_store.has_user_message_since(rollout, offset, "hello")
+
+
 def test_codex_store_parses_summary_and_messages():
     path = _sample_codex_session()
     summary = codex_store.read_session(path)
