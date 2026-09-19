@@ -748,3 +748,51 @@ def test_the_payload_carries_the_register_the_parse_used(tmp_path):
     out = workspace.workspace_overview(str(_repo_workflow(tmp_path)), use_cache=False)
     assert out["belt"]["workflows"]["research"]["stages"][-1] == "archived"
     assert out["belt"]["source"] == "team-os/ways-of-working/workflows.md"
+
+
+# ── the register opts in at the file level, like `team:` → default_role ─────
+
+OPS_REGISTER = """---
+title: "ops-ish — งานแบ่งเป็นชิ้น"
+team: devops
+client: internal
+workflow: ops
+kind: project
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage | workflow |
+| :-: | --- | --- | :-: | --- | :-: | :-: |
+| **O1** | แถวที่เงียบ รับค่าของไฟล์ | จ. | ⬜ | ทั้ง workflow และ kind มาจาก frontmatter | verify | — |
+| **O2** | แถวที่ประกาศเอง ชนะไฟล์ | อ. | ⬜ | cell ชนะ frontmatter | review | dev |
+| **O3** | สถานีของ dev บนไฟล์ที่เป็น ops | พ. | ⬜ | ตกเพราะสายพานของไฟล์ไม่มีสถานีนี้ | review | — |
+"""
+
+
+def _ops_rows(tmp_path: Path) -> dict:
+    root = _repo(tmp_path, slices=OPS_REGISTER, gaps=None)
+    wow = root / "team-os" / "ways-of-working"
+    wow.mkdir(parents=True, exist_ok=True)
+    (wow / "workflows.md").write_text(REGISTRY, encoding="utf-8")
+    out = workspace.workspace_overview(str(root), use_cache=False)
+    return {s["id"]: s for s in out["projects"][0]["slices"]}
+
+
+def test_frontmatter_opts_a_whole_register_onto_a_belt(tmp_path):
+    """One line in the file, not one edit per row — the shape `team:` →
+    `default_role` has had since ADR-0035 §SD3."""
+    row = _ops_rows(tmp_path)["O1"]
+    assert row["workflow"] == "ops" and row["stage"] == "verify"
+    assert row["kind"] == "project"
+
+
+def test_a_row_cell_still_wins_over_the_files_declaration(tmp_path):
+    row = _ops_rows(tmp_path)["O2"]
+    assert row["workflow"] == "dev" and row["stage"] == "review"
+
+
+def test_the_files_belt_is_what_a_blank_rows_station_is_judged_against(tmp_path):
+    """`review` is dev's station; on a register whose belt is `ops` it is a
+    card standing on the wrong belt, exactly as if the row had said so."""
+    assert _ops_rows(tmp_path)["O3"]["stage"] == ""
