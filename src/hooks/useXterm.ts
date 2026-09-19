@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { CanvasAddon } from '@xterm/addon-canvas';
 
 /** ADR-0027 §SD5 — trailing debounce for observer-driven fits. */
 const FIT_DEBOUNCE_MS = 50;
@@ -129,12 +130,8 @@ export function useXterm({
     fitAddonRef.current = fitAddon;
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
-    // xterm.js's built-in width table predates Unicode 11 and undercounts/
-    // miscounts combining marks for several scripts (observed: Thai tone
-    // marks — ADR-0052 follow-up). The harness's own renderer (e.g. Claude
-    // Code's Ink UI) computes cursor position from a current width table, so
-    // xterm falling behind desyncs the visible cursor from the harness's own
-    // idea of it, worse with each character typed.
+    // Newer Unicode width data (emoji, CJK extensions); did not by itself fix
+    // the Thai rendering issue below, but is a correct upgrade regardless.
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
 
@@ -144,6 +141,19 @@ export function useXterm({
     resizeObserverRef.current = ro;
 
     term.open(container);
+    // Without a canvas/WebGL addon, xterm falls back to its DOM renderer,
+    // which sizes each glyph cluster to the fixed cell grid with per-span
+    // CSS letter-spacing computed from the *primary* font's metrics. None of
+    // the configured fonts (Cascadia Code, Fira Code) have Thai glyphs, so
+    // the browser silently substitutes a fallback font per character for
+    // Thai text — one with very different metrics — and the DOM renderer's
+    // compensation for that mismatch is what actually produced the reported
+    // "cursor jumps left" (confirmed via the rendered DOM: a combining tone
+    // mark's cluster measured -1.1px of compensating letter-spacing against
+    // the cell grid). The canvas renderer draws glyphs into a bitmap cell
+    // instead of relying on CSS layout to approximate cell width, which does
+    // not need this compensation at all.
+    term.loadAddon(new CanvasAddon());
 
     // Double rAF for post-layout fit
     requestAnimationFrame(() => requestAnimationFrame(() => fit()));
