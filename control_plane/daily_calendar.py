@@ -20,14 +20,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from datetime import date as Date, datetime, timedelta
+from datetime import date as Date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 # Owner is Asia/Bangkok (docs/workspace-operating-rules.md § Time / clock) —
 # "today" for this view must follow the owner's day, not the container's UTC.
-_OWNER_TZ = ZoneInfo("Asia/Bangkok")
+# A fixed +07:00 rather than zoneinfo.ZoneInfo("Asia/Bangkok"): Thailand has
+# not observed DST since 1994, so the offset never actually varies, and
+# ZoneInfo needs an IANA tzdata source that Windows Python does not ship —
+# unlike POSIX, it has no OS-level fallback and raises ZoneInfoNotFoundError
+# at import time (crashing server.py) unless the tzdata PyPI package is
+# separately installed, which breaks the stdlib-only / no-pip-install promise
+# (README § "Your data stays local"). Matches control_plane/role_activity.py
+# § _OWNER_TZ, which already uses this same fixed offset for this same zone.
+_OWNER_TZ = timezone(timedelta(hours=7))
 
 _HEADING_RE = re.compile(r"^#{1,6}\s*.*⏱️.*ตารางเวลา")
 _TIME_RANGE_RE = re.compile(r"~?(\d{1,2}:\d{2})\s*[–—-]\s*~?(\d{1,2}:\d{2})")
