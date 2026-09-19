@@ -29,7 +29,7 @@ class PosixHost:
         env: Optional[dict],
         rows: int,
         cols: int,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         import fcntl
         import pty
         import termios
@@ -57,7 +57,7 @@ class PosixHost:
             fcntl.ioctl(fd, termios.TIOCSWINSZ, _winsz(rows, cols))
         except OSError:
             pass
-        return fd, pid
+        return fd, fd, pid  # one bidirectional master fd — see HostRuntime.spawn_pty
 
     def resize(self, fd: int, rows: int, cols: int) -> None:
         import fcntl
@@ -94,3 +94,14 @@ class PosixHost:
 
     def resolve_executable(self, name: str) -> str:
         return shutil.which(name) or name
+
+    def close(self, fd: int, write_fd: Optional[int] = None) -> None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        if write_fd is not None and write_fd != fd:
+            try:
+                os.close(write_fd)
+            except OSError:
+                pass
