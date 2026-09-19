@@ -63,8 +63,7 @@ export const MessageList: FC<MessageListProps> = ({ messages, typing }) => {
     if (messages.length === 0) {
       return (
         <div className="chat-empty">
-          No messages yet — switch to{' '}
-          <span className="ro-empty-hint">Terminal</span> to start a conversation.
+          No messages yet. Write a message to continue this session.
         </div>
       );
     }

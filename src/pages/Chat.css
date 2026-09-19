@@ -13,6 +13,53 @@
   flex: 0 0 auto;
 }
 
+.session-chat { min-height: 0; width: 100%; }
+.session-chat-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.session-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 60px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.session-chat-header > div { min-width: 0; }
+.session-chat-header strong, .session-chat-header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-chat-header small { color: var(--muted); font: 11px var(--mono); margin-top: 4px; }
+.session-chat-header button { font-size: 22px; line-height: 1; }
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.chat-composer textarea {
+  flex: 1;
+  min-width: 180px;
+  max-height: 30vh;
+  resize: vertical;
+  color: var(--fg);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font: 13px var(--sans);
+}
+.chat-composer textarea:focus-visible { outline: 2px solid var(--accent); }
+.chat-send-error { width: 100%; color: var(--blocked); font-size: 12px; }
+
 /* ── state banner ── */
 .state-banner {
   text-align: center;
@@ -378,8 +425,8 @@
   }
 }
 
-/* ── read-only status bar (replaces chat input — ADR-0005) ── */
-.readonly-bar {
+/* Agent chat status and export controls. */
+.chat-status-bar {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
@@ -481,7 +528,7 @@
   }
 }
 
-/* ── copy button + readonly-bar right cluster (ADR-0007) ── */
+/* ── copy button + chat status bar right cluster (ADR-0007) ── */
 .bubble {
   position: relative;
 }
