@@ -441,9 +441,9 @@ def _scan_projects(
         slices_file = child / "slices.md"
         if not slices_file.is_file():
             continue
-        slices = _parse_slices(slices_file, registry)
-        slices = _overlay_open_branches(root, child.name, slices, branches)
         owns = _frontmatter(slices_file)
+        slices = _parse_slices(slices_file, registry, owns)
+        slices = _overlay_open_branches(root, child.name, slices, branches)
         found.append(
             {
                 "name": child.name,
@@ -650,7 +650,8 @@ def _frontmatter(path: Path) -> dict[str, str]:
     """The `key: value` lines of a leading `---` block.
 
     Hand-rolled rather than PyYAML: HLD v2 AD1 keeps this server zero-dependency,
-    and the two keys read here (`client`, `team`) are plain scalars. Anything
+    and the keys read here (`client`, `team`, and since 2026-09-19 `workflow`
+    and `kind`) are plain scalars. Anything
     more structured is deliberately not supported — a parser that half-implements
     YAML is worse than one that says what it reads.
     """
@@ -672,7 +673,11 @@ def _frontmatter(path: Path) -> dict[str, str]:
     return out
 
 
-def _parse_slices(path: Path, registry: Optional[dict] = None) -> list[Slice]:
+def _parse_slices(
+    path: Path,
+    registry: Optional[dict] = None,
+    defaults: Optional[dict] = None,
+) -> list[Slice]:
     """Rows of the first markdown table in slices.md.
 
     Deliberately positional rather than header-driven: the files are Thai prose
@@ -697,10 +702,14 @@ def _parse_slices(path: Path, registry: Optional[dict] = None) -> list[Slice]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    return _parse_slices_text(text, registry)
+    return _parse_slices_text(text, registry, defaults)
 
 
-def _parse_slices_text(text: str, registry: Optional[dict] = None) -> list[Slice]:
+def _parse_slices_text(
+    text: str,
+    registry: Optional[dict] = None,
+    defaults: Optional[dict] = None,
+) -> list[Slice]:
     """Same table walk as `_parse_slices`, given text instead of a path.
 
     Split out for S40: a handoff check needs to run this same parse against a
@@ -715,6 +724,13 @@ def _parse_slices_text(text: str, registry: Optional[dict] = None) -> list[Slice
         registry = _fallback_registry("/".join(_WORKFLOWS_FILE), "registry not passed")
     belts = registry.get("workflows", {})
     kinds = set(registry.get("kinds") or FALLBACK_KINDS)
+    # File-level defaults from the register's own frontmatter, the same shape
+    # `team:` → `default_role` has had since ADR-0035 §SD3: the row cell wins,
+    # the file answers for every row that leaves it blank. Opting a whole
+    # register onto a belt is then one line, not one edit per row — which is
+    # what a register whose `team:` is `devops` is already saying about itself.
+    default_workflow = (defaults or {}).get("workflow", "").strip().lower()
+    default_kind = (defaults or {}).get("kind", "").strip().lower()
     # Rows are dicts rather than a widening tuple: this walk already grew from
     # 5 positional cells to 7 and then to 9, and positional coupling in this
     # file has drawn blood once already (a `|` inside a cell shifted every
@@ -797,6 +813,8 @@ def _parse_slices_text(text: str, registry: Optional[dict] = None) -> list[Slice
             workflow_raw = ""
         if kind_raw in _BLOCKED_EMPTY:
             kind_raw = ""
+        workflow_raw = workflow_raw or default_workflow
+        kind_raw = kind_raw or default_kind
 
         # A belt the registry does not have keeps its raw value and a flag —
         # never substituted, never dropped (ADR-0051 §SD4). Its station keeps
