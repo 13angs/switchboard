@@ -605,11 +605,13 @@ def test_prompt_is_typed_without_a_submit_key(srv):
     assert not payload.endswith(b"\r")
 
 
-def test_chat_payload_still_submits_so_the_contrast_is_pinned(srv):
-    """`_message` must keep sending. If these two ever converge, one of the two
-    behaviours has been broken silently."""
-    assert srv._chat_message_payload("hi", "claude").endswith(b"\r")
-    assert srv._chat_message_payload("hi", "codex").endswith(b"\r")
+def test_chat_text_and_submit_are_separate_writes(srv, monkeypatch):
+    """Chat must honor the same S24 paste boundary as work dispatch."""
+    monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+    term = _FakeTerm()
+    term.harness = "codex"
+    srv._write_chat_message(term, "hello")
+    assert term.written == [b"hello", b"\r"]
 
 
 def test_claude_and_codex_submit_with_carriage_return_not_linefeed(srv):

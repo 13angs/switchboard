@@ -4,14 +4,15 @@ import { SessionChat } from './SessionChat';
 import '../../pages/Chat.css';
 
 export function SessionChatDialog({ card, onClose }: { card: SessionCard; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    closeRef.current?.focus();
+    document.querySelector<HTMLTextAreaElement>('.session-chat-dialog .chat-composer textarea')?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
       if (event.key === 'Tab') {
         const focusable = document.querySelectorAll<HTMLElement>('.session-chat-dialog button:not(:disabled), .session-chat-dialog textarea:not(:disabled)');
         const first = focusable[0];
@@ -26,13 +27,13 @@ export function SessionChatDialog({ card, onClose }: { card: SessionCard; onClos
       document.removeEventListener('keydown', onKey);
       previous?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="session-chat-dialog" role="dialog" aria-modal="true" aria-label={`Chat with ${card.title || card.session_id}`}>
       <div className="session-chat-header">
         <div><strong>{card.title || 'Untitled session'}</strong><small>{card.harness} · {card.activity} · {card.session_id}</small></div>
-        <button ref={closeRef} aria-label="Close chat" onClick={onClose}>×</button>
+        <button aria-label="Close chat" onClick={onClose}>×</button>
       </div>
       <SessionChat sessionId={card.session_id} active={card.activity === 'Working' || card.activity === 'Awaiting'} />
     </div>
