@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 
 /** ADR-0027 §SD5 — trailing debounce for observer-driven fits. */
 const FIT_DEBOUNCE_MS = 50;
@@ -116,7 +117,11 @@ export function useXterm({
       fontSize,
       fontFamily,
       theme: TERM_THEME,
-      allowProposedApi: false,
+      // Unicode11Addon needs `terminal.unicode`, which xterm.js still gates
+      // behind this flag in 5.5.0 — without it the Terminal constructor
+      // itself throws ("You must set the allowProposedApi option to true to
+      // use proposed API"), taking the whole component down.
+      allowProposedApi: true,
     });
     termRef.current = term;
 
@@ -124,6 +129,14 @@ export function useXterm({
     fitAddonRef.current = fitAddon;
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
+    // xterm.js's built-in width table predates Unicode 11 and undercounts/
+    // miscounts combining marks for several scripts (observed: Thai tone
+    // marks — ADR-0052 follow-up). The harness's own renderer (e.g. Claude
+    // Code's Ink UI) computes cursor position from a current width table, so
+    // xterm falling behind desyncs the visible cursor from the harness's own
+    // idea of it, worse with each character typed.
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = '11';
 
     // ResizeObserver for container size changes (debounced — ADR-0027 §SD5)
     const ro = new ResizeObserver(() => scheduleFit());
