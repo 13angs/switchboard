@@ -36,6 +36,8 @@ def list_prs(repo_dir: str, states=("open", "merged")) -> List[PullRequest]:
                 ["gh", "pr", "list", "--state", st, "--limit", "60", "--json", _FIELDS],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
                 check=True,
                 cwd=repo_dir,

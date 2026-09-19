@@ -294,7 +294,13 @@ _WORKTREE_DIR = (".claude", "worktrees")
 
 def _git(cwd: Path, *args: str, timeout_s: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout_s
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_s,
     )
 
 
@@ -409,6 +415,8 @@ def _gh(cwd: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         env={**os.environ, "GH_PROMPT_DISABLED": "1"},
     )
@@ -687,6 +695,8 @@ def _run_node(
             cwd=str(tree),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (subprocess.SubprocessError, OSError):
