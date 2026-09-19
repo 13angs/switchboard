@@ -616,3 +616,135 @@ def test_missing_gh_binary_falls_back_to_main(tmp_path, monkeypatch):
     out = workspace.workspace_overview(str(repo), use_cache=False)
     by_id = {s["id"]: s for s in out["projects"][0]["slices"]}
     assert by_id["S1"]["stage"] == "readydev"
+
+
+# ── ADR-0051: the belt belongs to a workflow ────────────────────────────────
+
+REGISTRY = """---
+title: "ทะเบียนสายพาน"
+---
+
+# ทะเบียนสายพาน
+
+## `workflow` — กระบวนการที่แถวนั้นเดินตาม
+
+| workflow | label | stages |
+| :-- | --- | --- |
+| `dev` | Software Delivery | `backlog` → `techdesign` → `readydev` → `inprogress` → `review` → `readyqa` → `readydeploy` → `deployed` → `done` |
+| `ops` | Operations | `incoming` → `assess` → `execute` → `verify` → `done` |
+| `research` | Research | `question` → `reading` → `archived` |
+
+## `kind` — ธรรมชาติของงาน
+
+| kind | แปลว่า |
+| :-- | --- |
+| `project` | จบได้ถาวร |
+| `routine` | เกิดซ้ำเป็นรอบ |
+"""
+
+WORKFLOW_SLICES = """---
+title: "belts — งานแบ่งเป็นชิ้น"
+---
+
+# Slices
+
+| # | ชิ้น | วัน | สถานะ | ใช้งานได้จริงว่า | stage | workflow | kind |
+| :-: | --- | --- | :-: | --- | :-: | :-: | :-: |
+| **W0** | สถานีของ dev โดยไม่ประกาศสายพาน | จ. | ⬜ | ของเดิมต้องอ่านเป็น dev | review | — | project |
+| **W1** | งาน ops ที่สถานีของ ops | อ. | ⬜ | verify เป็นของ ops | verify | ops | routine |
+| **W2** | งาน ops ที่ยืนสถานีของ dev | พ. | ⬜ | route-lint Check 9 จะฟ้อง | review | ops | — |
+| **W3** | สายพานที่ทะเบียนไม่รู้จัก | พฤ. | ⬜ | Check 12 จะฟ้อง แต่การ์ดต้องไม่หาย | draft | marketing | — |
+| **W4** | สายพานที่จบไม่ใช่คำว่า done | ศ. | ⬜ | ค้างไม่ปิดที่สถานีสุดท้ายของ research | archived | research | project |
+| **W5** | ปิดข้ามด่านบนสายพาน research | ส. | ✅ | กา ✅ ทั้งที่ยังอยู่กลางสายพาน | reading | research | — |
+| **W6** | kind ที่ทะเบียนไม่รู้จัก | อา. | ⬜ | Check 13 จะฟ้อง | — | — | habit |
+"""
+
+
+def _repo_workflow(tmp_path: Path, *, registry: str | None = REGISTRY) -> Path:
+    root = _repo(tmp_path, slices=WORKFLOW_SLICES, gaps=None)
+    if registry is not None:
+        wow = root / "team-os" / "ways-of-working"
+        wow.mkdir(parents=True, exist_ok=True)
+        (wow / "workflows.md").write_text(registry, encoding="utf-8")
+    return root
+
+
+def _rows(tmp_path: Path, **kw) -> dict:
+    out = workspace.workspace_overview(
+        str(_repo_workflow(tmp_path, **kw)), use_cache=False
+    )
+    return {s["id"]: s for s in out["projects"][0]["slices"]}
+
+
+def test_registry_is_parsed_from_the_workspace_not_mirrored_in_code(tmp_path):
+    """Adding a belt is a table row upstream, not a release of this app
+    (ADR-0051 §SD1 · meta/adr-slices-work-model-2026-09.md §SD2)."""
+    reg = workspace.belt_registry(_repo_workflow(tmp_path))
+    assert reg["degraded"] is False
+    assert set(reg["workflows"]) == {"dev", "ops", "research"}
+    # order is the belt's meaning, so it is read as a sequence, not a set
+    assert reg["workflows"]["ops"]["stages"] == [
+        "incoming",
+        "assess",
+        "execute",
+        "verify",
+        "done",
+    ]
+    assert reg["workflows"]["ops"]["label"] == "Operations"
+    assert reg["kinds"] == ["project", "routine"]
+
+
+def test_a_missing_registry_degrades_to_the_dev_belt_rather_than_blanking(tmp_path):
+    """The board runs against workspaces whose registry has not merged yet.
+    Fail soft and say so — never blank every station (ADR-0051 § Consequences)."""
+    reg = workspace.belt_registry(_repo(tmp_path, gaps=None))
+    assert reg["degraded"] is True and reg["reason"]
+    assert list(reg["workflows"]) == ["dev"]
+    assert reg["workflows"]["dev"]["stages"] == list(workspace.STAGE_ORDER)
+
+
+def test_a_station_and_no_belt_reads_as_dev(tmp_path):
+    """§SD4 — the three registers that adopted `stage` first carry no
+    `workflow` column at all, and must not move."""
+    row = _rows(tmp_path)["W0"]
+    assert row["workflow"] == "dev" and row["stage"] == "review"
+
+
+def test_a_station_is_judged_against_the_rows_own_belt(tmp_path):
+    """`verify` is `ops`'s and `review` is `dev`'s — there is no shared
+    vocabulary to fall back on (ADR-0051 §SD1)."""
+    by_id = _rows(tmp_path)
+    assert by_id["W1"]["stage"] == "verify"  # on its own belt
+    assert by_id["W2"]["stage"] == ""  # dev's station, claimed by an ops row
+
+
+def test_an_unknown_belt_keeps_its_raw_value_and_the_card_survives(tmp_path):
+    """§SD4 — show what was read and flag it. Never substitute `dev`, never
+    drop the card: route-lint Check 12 is what fails the PR."""
+    row = _rows(tmp_path)["W3"]
+    assert row["workflow"] == "marketing" and row["workflow_known"] is False
+    assert row["stage"] == "draft"  # raw, not blanked by a belt that is absent
+    assert row["axis_conflict"] is None  # abstains rather than guessing
+
+
+def test_the_conflict_badge_reads_the_belts_last_station_not_the_word_done(tmp_path):
+    """§SD5 — `done` being last on all three real belts today is a
+    coincidence this code must not encode."""
+    by_id = _rows(tmp_path)
+    assert by_id["W4"]["axis_conflict"] == "stuck-open"  # `archived` ends research
+    assert by_id["W5"]["axis_conflict"] == "skipped-gate"
+
+
+def test_kind_is_independent_of_workflow(tmp_path):
+    """A `routine` on the `dev` belt is a dependency audit that ships a PR —
+    nothing cross-validates the two axes (workspace ADR §SD3)."""
+    by_id = _rows(tmp_path)
+    assert by_id["W1"]["kind"] == "routine" and by_id["W1"]["workflow"] == "ops"
+    assert by_id["W0"]["kind"] == "project" and by_id["W0"]["workflow"] == "dev"
+    assert by_id["W6"]["kind"] == "habit" and by_id["W6"]["kind_known"] is False
+
+
+def test_the_payload_carries_the_register_the_parse_used(tmp_path):
+    out = workspace.workspace_overview(str(_repo_workflow(tmp_path)), use_cache=False)
+    assert out["belt"]["workflows"]["research"]["stages"][-1] == "archived"
+    assert out["belt"]["source"] == "team-os/ways-of-working/workflows.md"

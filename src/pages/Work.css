@@ -509,6 +509,27 @@
   background: var(--blocked-soft);
   white-space: nowrap;
 }
+/* Which belt this card walks, and where on it. Only rendered in the status
+   grouping — the one place cards from different belts sit next to each other
+   (ADR-0051 §SD2). Quieter than every other badge on the card on purpose: it
+   is orientation, not a thing to act on. `.unknown` is the exception, because
+   a belt the register does not have IS a thing to act on (§SD4). */
+.card .belt-badge {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.card .belt-badge.unknown {
+  border-color: var(--blocked);
+  color: var(--blocked);
+  background: var(--blocked-soft);
+}
 .card .ready-now {
   align-self: flex-start;
   font-family: var(--mono);
@@ -1649,6 +1670,21 @@
 .work-view.on {
   background: var(--accent-soft);
   color: var(--fg);
+}
+/* A `kind` chip is a different kind of control from a belt chip — it filters
+   without switching the grouping (ADR-0051 §SD3) — so it reads differently
+   even while sitting in the same strip. Dotted rather than a separate strip:
+   they are one row of chips to the hand, two concepts to the model. */
+.work-view.kind {
+  font-family: var(--mono);
+  font-size: 11px;
+  border-left: 1px dashed var(--line);
+}
+.belt-degraded {
+  font-size: 11px;
+  color: var(--blocked);
+  white-space: nowrap;
+  align-self: center;
 }
 
 /* ── the register itself ───────────────────────────────────────────────── */

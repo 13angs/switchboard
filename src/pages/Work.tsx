@@ -6,6 +6,7 @@ import {
   type WorkspaceSlice,
   type WorkspaceDispatch,
   type TransitionPublished,
+  type BeltRegistry,
 } from '../lib/api';
 import {
   composePrompt,
@@ -39,25 +40,28 @@ import { RoleActivityDialog } from './RoleActivity';
 import { RoleRegister } from './RoleRegister';
 import { CardTransitions } from './CardTransitions';
 import {
+  ALL_VIEW,
+  DEFAULT_WORKFLOW,
+  beltBadge,
+  chipsFor,
   columnOf,
   columnsFor,
   conflictLabel,
-  defaultGrouping,
-  type Grouping,
+  matchesView,
+  type WorkView,
 } from '../lib/belt';
 import { useToast, ToastContainer } from '../components/shared/Toast';
 import './Work.css';
 
-/** The two groupings of the board screen (row-status.md § สายพาน).
+/** The chip row's first chip — every row, grouped by status (ADR-0051 §SD2).
  *
  *  Not a third screen — ADR-0043 §SD1 capped `/work` at two, and this is the
  *  same rows read along the other axis: `สถานะ` answers *is this row open*,
- *  `stage` answers *where is it on the belt*. Column lists live in
- *  `src/lib/belt.ts` so the choice is checkable offline. */
-const GROUPINGS = [
-  { key: 'belt', label: 'สายพาน' },
-  { key: 'status', label: 'สถานะแถว' },
-] as const;
+ *  `stage` answers *where is it on the belt of the process it follows*.
+ *  The rest of the chips come from the workspace's own register, never from a
+ *  list here (§SD1); `src/lib/belt.ts` holds the pure functions so the choice
+ *  is checkable offline. */
+const ALL_CHIP = { key: 'all', label: 'ทั้งหมด' } as const;
 
 /** `off` is not a column: days with no work are context, not a queue. */
 const HIDDEN_COLUMN = 'off';
@@ -116,12 +120,13 @@ export function WorkPage() {
   // so it is opened by a press and never on load: nothing about it belongs in
   // the board's own fetch.
   const [measuring, setMeasuring] = useState(false);
-  // `null` until the payload arrives: the grouping a project opens in is a
-  // fact of the file (does it declare stations at all), not a preference, so
-  // it cannot be decided before the file is read. Once the operator picks, the
-  // pick wins for the rest of the visit and is deliberately not stored — same
-  // reasoning ADR-0043 §SD1 gave for the screen itself.
-  const [grouping, setGrouping] = useState<Grouping | null>(null);
+  // Opens on the status grouping, across every belt — the answer to "what
+  // needs me right now?" (ADR-0051 §SD2). Three fields rather than one string
+  // because the chip row holds two different kinds of filter (§SD3). Once the
+  // operator picks, the pick wins for the rest of the visit and is
+  // deliberately not stored — same reasoning ADR-0043 §SD1 gave for the
+  // screen itself.
+  const [workView, setWorkView] = useState<WorkView>(ALL_VIEW);
   // ADR-0043 §SD1 — always `board`, never restored from anywhere.
   const [view, setView] = useState<View>('board');
   // The board shows one project at a time, and which one lives in the URL so a
@@ -175,12 +180,24 @@ export function WorkPage() {
   // just looks it up for whichever seat is picked.
   const actingOffice =
     dispatchRoles.find((r) => slugifyRole(r.role) === effectiveActingRole)?.office ?? '';
-  // The belt is offered from what the *shown* registers declare, not from the
-  // workspace as a whole: picking a project that has no stations must not
-  // leave the operator staring at nine empty columns.
-  const beltAvailable = defaultGrouping(selection.shown) === 'belt';
-  const activeGrouping: Grouping =
-    grouping ?? (beltAvailable ? 'belt' : 'status');
+  // The chips are offered from what the *shown* registers declare, not from
+  // the register as a whole: a chip that opens an empty board is noise, which
+  // is the same reason the belt was only ever offered where stations existed.
+  const registry = data?.belt ?? null;
+  const chips = chipsFor(selection.shown, registry);
+  // A chip whose belt or kind stopped appearing in the shown rows (the operator
+  // narrowed to another project) must not leave the board filtered to nothing.
+  const activeView: WorkView =
+    (workView.mode === 'workflow' &&
+      !chips.workflows.some((w) => w.key === workView.workflow)) ||
+    (workView.kind && !chips.kinds.includes(workView.kind))
+      ? ALL_VIEW
+      : workView;
+  // Transitions live on the `dev` belt alone (ADR-0051 §SD6): it is the one
+  // belt row-status.md § ตารางการส่งต่อ writes permissions for. So is the seat
+  // that presses them.
+  const onDevBelt =
+    activeView.mode === 'workflow' && activeView.workflow === DEFAULT_WORKFLOW;
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -265,32 +282,73 @@ export function WorkPage() {
           ))}
         </div>
         {/* The second axis, on the same screen (row-status.md § สายพาน).
-            Only offered where the board has a belt to read: a register with no
-            station declared would answer with nine empty columns. */}
-        {view === 'board' && data && beltAvailable && (
-          <div
-            className="work-views"
-            role="tablist"
-            aria-label="แกนที่บอร์ดจัดกลุ่มด้วย"
-          >
-            {GROUPINGS.map((g) => (
+            One row of chips, TWO kinds of filter — a belt switches the
+            grouping, a `kind` does not (ADR-0051 §SD3). They are grouped
+            visually and kept apart in the state, which is the whole point. */}
+        {view === 'board' && data && (chips.workflows.length > 0 || chips.kinds.length > 0) && (
+          <div className="work-views" role="tablist" aria-label="มุมมองของบอร์ด">
+            <button
+              role="tab"
+              aria-selected={activeView.mode === 'status' && !activeView.kind}
+              className={`work-view${
+                activeView.mode === 'status' && !activeView.kind ? ' on' : ''
+              }`}
+              onClick={() => setWorkView(ALL_VIEW)}
+            >
+              {ALL_CHIP.label}
+            </button>
+            {chips.workflows.map((w) => (
               <button
-                key={g.key}
+                key={`wf-${w.key}`}
                 role="tab"
-                aria-selected={activeGrouping === g.key}
-                className={`work-view${activeGrouping === g.key ? ' on' : ''}`}
-                onClick={() => setGrouping(g.key)}
+                aria-selected={
+                  activeView.mode === 'workflow' && activeView.workflow === w.key
+                }
+                className={`work-view${
+                  activeView.mode === 'workflow' && activeView.workflow === w.key
+                    ? ' on'
+                    : ''
+                }`}
+                title={`สายพาน ${w.key} — จัดกลุ่มตามสถานี`}
+                onClick={() =>
+                  setWorkView((v) => ({
+                    mode: 'workflow',
+                    workflow: w.key,
+                    kind: v.kind,
+                  }))
+                }
               >
-                {g.label}
+                {w.label}
+              </button>
+            ))}
+            {chips.kinds.map((k) => (
+              <button
+                key={`kind-${k}`}
+                role="tab"
+                aria-selected={activeView.kind === k}
+                className={`work-view kind${activeView.kind === k ? ' on' : ''}`}
+                title={`กรองตาม kind — ${k} · ไม่เปลี่ยนการจัดกลุ่ม`}
+                onClick={() =>
+                  setWorkView((v) => ({ ...v, kind: v.kind === k ? '' : k }))
+                }
+              >
+                {k}
               </button>
             ))}
           </div>
+        )}
+        {/* The register could not be read — say so rather than showing a belt
+            nobody declared (ADR-0051 § Consequences 1). */}
+        {view === 'board' && registry?.degraded && (
+          <span className="belt-degraded" title={registry.reason}>
+            ⚠ อ่านทะเบียนสายพานไม่ได้ — ใช้สายพาน `dev` แทน
+          </span>
         )}
         {/* S43a — who is at the keyboard, separate from any row's own
             `role` cell (row-status.md § ตารางการส่งต่อ 🔑). Only offered
             where there is a belt to send a card along; the acting role has
             nothing to do on the status grouping. */}
-        {view === 'board' && data && beltAvailable && (
+        {view === 'board' && data && onDevBelt && (
           <label className="acting-role">
             สวมบทบาท
             <select
@@ -405,12 +463,22 @@ export function WorkPage() {
 
       {view === 'board' &&
         data &&
-        selection.shown.map((p) => (
+        selection.shown
+          // In workflow mode a register with nothing on that belt would render
+          // as a header over empty columns — the chip already promised there
+          // are cards, so show the ones that have them.
+          .filter(
+            (p) =>
+              activeView.mode !== 'workflow' ||
+              p.slices.some((s) => matchesView(s, activeView)),
+          )
+          .map((p) => (
           <ProjectBoard
             key={p.name}
             project={p}
             data={data}
-            grouping={beltAvailable ? activeGrouping : 'status'}
+            view={activeView}
+            registry={registry}
             actingRole={effectiveActingRole}
             actingOffice={actingOffice}
             onMoved={onMoved}
@@ -755,7 +823,8 @@ const READ_MORE_THRESHOLD = 100;
 function ProjectBoard({
   project,
   data,
-  grouping,
+  view,
+  registry,
   actingRole,
   actingOffice,
   onMoved,
@@ -765,7 +834,8 @@ function ProjectBoard({
 }: {
   project: WorkspaceProject;
   data: WorkspaceResponse;
-  grouping: Grouping;
+  view: WorkView;
+  registry: BeltRegistry | null;
   /** S43a — the role picked at the board header. `null` before anyone has
    *  picked one. */
   actingRole: string | null;
@@ -814,13 +884,14 @@ function ProjectBoard({
         )}
       </div>
       <div className="cols">
-        {columnsFor(grouping).map((col) => {
+        {columnsFor(view, registry).map((col) => {
           // `off` is context, not a queue — hidden in either grouping, and it
           // has no belt station to fall into either.
           const items = project.slices.filter(
             (s) =>
               s.column !== HIDDEN_COLUMN &&
-              columnOf(s, grouping, project.slices) === col.key,
+              matchesView(s, view) &&
+              columnOf(s, view, project.slices) === col.key,
           );
           return (
             <div className="col" key={col.key}>
@@ -882,12 +953,40 @@ function ProjectBoard({
                         board reads files, it does not edit them
                         (meta/adr-slices-stage-axis-2026-09.md §SD3). */}
                     {conflict && <span className="axis-conflict">⚠ {conflict}</span>}
+                    {/* The status grouping is the one place cards from
+                        different belts stand next to each other, so it is the
+                        one place the belt has to be on the card (ADR-0051
+                        §SD2). A belt the register does not have still shows —
+                        with its raw name and a mark — because route-lint
+                        Check 12 is what fails the PR, not the board (§SD4). */}
+                    {view.mode === 'status' &&
+                      (() => {
+                        const badge = beltBadge(s);
+                        if (!badge) return null;
+                        return (
+                          <span
+                            className={`belt-badge${badge.known ? '' : ' unknown'}`}
+                            title={
+                              badge.known
+                                ? undefined
+                                : 'สายพานนี้ไม่มีในทะเบียน — route-lint Check 12'
+                            }
+                          >
+                            {badge.known ? '' : '⚠ '}
+                            {badge.belt}
+                            {badge.station && ` · ${badge.station}`}
+                          </span>
+                        );
+                      })()}
                     {/* S43a–S43c — a card's own row (not a `part-of`
                         criterion, which carries no stage of its own) on the
                         belt grouping offers whatever `evaluate()` says out of
                         its current station, for whichever role is sworn in
                         at the header. */}
-                    {grouping === 'belt' && !s.part_of && s.stage && (
+                    {view.mode === 'workflow' &&
+                      view.workflow === DEFAULT_WORKFLOW &&
+                      !s.part_of &&
+                      s.stage && (
                       <CardTransitions
                         project={project.name}
                         client={project.client}

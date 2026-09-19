@@ -31,6 +31,10 @@ const row = (id: string, column: string, role: string | null) => ({
   part_of: '',
   criteria: null,
   axis_conflict: null,
+  workflow: '',
+  workflow_known: true,
+  kind: '',
+  kind_known: true,
   handoff: null,
 });
 

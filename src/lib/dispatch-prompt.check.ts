@@ -34,6 +34,10 @@ const slice: WorkspaceSlice = {
   part_of: '',
   criteria: null,
   axis_conflict: null,
+  workflow: '',
+  workflow_known: true,
+  kind: '',
+  kind_known: true,
   handoff: null,
 };
 
