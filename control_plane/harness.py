@@ -10,20 +10,112 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from . import config
+from . import config, workspace
 
 
-def available_launchers(env_file: dict) -> list[dict]:
+_MANUAL_TIERS = ("light", "standard", "heavy")
+_EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max")
+
+
+def _manual_session_start_capabilities(repo_root: str, harness_name: str) -> dict:
+    """Project workspace launch policy for one manual fresh-session harness.
+
+    The browser renders this projection; it never owns concrete model ids or
+    effort compatibility rules (ADR-0054).
+    """
+    empty_defaults = {"tier": None, "model": None, "effort": None}
+    if harness_name == "agy":
+        return {
+            "pinning": False,
+            "models": [],
+            "efforts": [],
+            "defaults": empty_defaults,
+            "available": True,
+            "error": None,
+        }
+
+    try:
+        payload = workspace.workspace_overview(repo_root)
+    except ValueError as exc:
+        return {
+            "pinning": True,
+            "models": [],
+            "efforts": [],
+            "defaults": empty_defaults,
+            "available": False,
+            "error": f"workspace model map unavailable: {exc}",
+        }
+
+    dispatch = payload.get("dispatch") or {}
+    tier_key = "tiers" if harness_name == "claude" else "codex_tiers"
+    tiers = dispatch.get(tier_key) or {}
+    missing = [tier for tier in _MANUAL_TIERS if not tiers.get(tier)]
+    if not dispatch.get("present") or missing:
+        return {
+            "pinning": True,
+            "models": [],
+            "efforts": [],
+            "defaults": empty_defaults,
+            "available": False,
+            "error": (
+                "workspace model map unavailable"
+                if not missing
+                else "workspace model map missing tier(s): " + ", ".join(missing)
+            ),
+        }
+
+    models = []
+    for tier in _MANUAL_TIERS:
+        models.append(
+            {
+                "tier": tier,
+                "id": tiers[tier],
+                "supports_effort": not (
+                    harness_name == "claude" and tier == "light"
+                ),
+            }
+        )
+
+    efforts = [
+        effort
+        for effort in _EFFORT_ORDER
+        if effort in workspace.VALID_EFFORTS
+        and not (harness_name == "codex" and effort == "max")
+    ]
+    standard = next(model for model in models if model["tier"] == "standard")
+    default_effort = "high" if standard["supports_effort"] and "high" in efforts else None
+    return {
+        "pinning": True,
+        "models": models,
+        "efforts": efforts,
+        "defaults": {
+            "tier": "standard",
+            "model": standard["id"],
+            "effort": default_effort,
+        },
+        "available": True,
+        "error": None,
+    }
+
+
+def available_launchers(env_file: dict, repo_root: Optional[str] = None) -> list[dict]:
     """Return launcher options for /state.
 
-    `providers` is kept harness-local: Claude can expose DeepSeek when
-    configured, while Codex exposes OpenAI only and agy exposes Google only.
+    When repo_root is supplied, each launcher also carries the manual
+    session-start capabilities/defaults defined by ADR-0054. Keeping the
+    argument optional preserves non-Board callers that only need providers.
     """
-    return [
+    launchers = [
         {"harness": "claude", "providers": config.available_providers(env_file)},
         {"harness": "codex", "providers": ["openai"]},
         {"harness": "agy", "providers": ["google"]},
     ]
+    if repo_root is not None:
+        for launcher in launchers:
+            launcher["session_start"] = _manual_session_start_capabilities(
+                repo_root, launcher["harness"]
+            )
+    return launchers
 
 
 def resolve(
