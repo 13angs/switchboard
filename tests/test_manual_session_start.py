@@ -301,6 +301,24 @@ def test_board_spawns_before_navigation_and_attaches_existing_pty():
     assert board.index("await startSessionApi(") < board.index("popup.location.href = url")
 
 
+def test_new_session_dialog_is_viewport_bounded_with_scrollable_body():
+    dialog = (ROOT / "src" / "components" / "board" / "NewSessionDialog.tsx").read_text(
+        encoding="utf-8"
+    )
+    css = (ROOT / "src" / "pages" / "Board.css").read_text(encoding="utf-8")
+
+    assert 'className="modal new-session-modal"' in dialog
+    assert 'className="new-session-body"' in dialog
+    assert 'className="modal-actions new-session-actions"' in dialog
+    assert dialog.index('className="new-session-body"') < dialog.index(
+        'className="modal-actions new-session-actions"'
+    )
+    assert "max-height: calc(100dvh - 24px);" in css
+    assert ".new-session-body {" in css
+    assert "overflow-y: auto;" in css
+    assert ".new-session-actions {" in css
+
+
 def test_dialog_uses_provider_specific_server_capabilities():
     dialog = (ROOT / "src" / "components" / "board" / "NewSessionDialog.tsx").read_text(
         encoding="utf-8"
