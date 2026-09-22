@@ -109,6 +109,73 @@ def test_approval_detector_marks_lifecycle_approval():
     assert marked == [term]
 
 
+def test_detector_records_actionable_claude_interaction():
+    events = []
+    captured = []
+    detector = notifications.HarnessOutputDetector(
+        events.append,
+        on_interaction=lambda term, name, prompt, fp: captured.append(
+            (term, name, prompt, fp)
+        ),
+    )
+    term = FakeTerm(harness="claude", provider="claude")
+
+    detector.inspect(
+        term, b"Do you want to allow this command?\n1. Yes\n2. No\n"
+    )
+
+    assert len(captured) == 1
+    assert captured[0][1] == "claude-allow-options"
+
+    store = notifications.PendingInteractionStore()
+    interaction = store.record(*captured[0])
+    assert [a.id for a in interaction.actions] == ["approve", "reject"]
+    assert store.consume(term, interaction.fingerprint, "approve") == (b"1", b"\r")
+
+
+def test_detector_records_actionable_codex_y_n_interaction():
+    events = []
+    captured = []
+    detector = notifications.HarnessOutputDetector(
+        events.append,
+        on_interaction=lambda term, name, prompt, fp: captured.append(
+            (term, name, prompt, fp)
+        ),
+    )
+    term = FakeTerm(session_id="sid-codex", harness="codex", provider="openai")
+
+    detector.inspect(term, b"Allow command? [y/n]\n")
+
+    assert len(captured) == 1
+    store = notifications.PendingInteractionStore()
+    interaction = store.record(*captured[0])
+    assert store.consume(term, interaction.fingerprint, "reject") == (b"n", b"\r")
+
+
+def test_interaction_store_rejects_stale_and_consumed_actions():
+    store = notifications.PendingInteractionStore()
+    term = FakeTerm()
+    interaction = store.record(
+        term,
+        "claude-allow-options",
+        "1. Yes 2. No",
+        "approval:test",
+    )
+
+    try:
+        store.consume(term, "wrong", "approve")
+        assert False, "stale fingerprint must fail"
+    except notifications.InteractionConflict:
+        pass
+
+    assert store.consume(term, interaction.fingerprint, "reject") == (b"2", b"\r")
+    try:
+        store.consume(term, interaction.fingerprint, "reject")
+        assert False, "consumed interaction must be one-shot"
+    except notifications.InteractionConflict:
+        pass
+
+
 def test_sse_payload_format():
     event = notifications.NotificationEvent(
         type="approval_required",
