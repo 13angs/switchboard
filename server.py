@@ -35,8 +35,8 @@ Endpoints:
                                          body {harness?, provider?, model?, effort?, prompt?}
                                          model pins the tier (ADR-0030); effort pins
                                          thinking depth (ADR-0032); prompt is typed
-                                         into the PTY and submitted too when model
-                                         is also given (ADR-0034 §SD1, ADR-0038 §SD2)
+                                         into the PTY; submit_prompt=true submits it
+                                         immediately (legacy model+prompt still submits)
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
@@ -1528,13 +1528,12 @@ def make_handler(repo_root: str):
             v3.0 (ADR-0030) adds two optional fields:
               model  — pins the tier the session runs on, validated against the
                        lineup the *workspace* declares, never a list held here.
-              prompt — typed into the PTY. When `model` is also given (the
-                       board's dispatch dialog is the only caller that sends
-                       both), the server submits it too (ADR-0034 §SD1,
-                       ADR-0038 §SD2, amended by S24 — see
-                       `_submit_typed_prompt`) — the click on "สั่งงาน" already
-                       is the decision. Without `model`, the prompt is left
-                       unsent as before (ADR-0030 §SD3).
+              prompt — typed into the PTY.
+              submit_prompt — when true, explicitly submit that prompt after
+                       typing it. When omitted, model+prompt keeps the existing
+                       dispatch behavior for backwards compatibility
+                       (ADR-0034 §SD1, ADR-0038 §SD2, amended by S24 — see
+                       `_submit_typed_prompt`).
 
             ADR-0032 adds a third:
               effort — pins the thinking depth. Validated against the fixed set
@@ -1656,6 +1655,14 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "prompt must be a string"})
                 return
             prompt = prompt or ""
+
+            requested_submit_prompt = body.get("submit_prompt")
+            if requested_submit_prompt is not None and not isinstance(
+                requested_submit_prompt, bool
+            ):
+                self._json(400, {"error": "submit_prompt must be a boolean"})
+                return
+
             try:
                 child_env = harness.provider_env(harness_name, provider, _ENV_FILE)
             except ValueError as e:
@@ -1682,11 +1689,15 @@ def make_handler(repo_root: str):
                 return
             discovery.invalidate_cache(repo_root)
 
-            # ADR-0034 §SD1 / ADR-0038 §SD2: model+prompt together is the one
-            # signature the board's dispatch dialog sends (DispatchDialog.tsx)
-            # — resume, prompt-less spawn, and chat's own _chat_message_payload
-            # path are untouched.
-            submit_prompt = bool(requested_model) and bool(prompt)
+            # New Session can request first-turn submission explicitly even for
+            # providers whose model is provider-owned (for example DeepSeek or
+            # Ollama). Existing dispatch callers that omit the flag retain the
+            # historical model+prompt signature.
+            submit_prompt = bool(prompt) and (
+                requested_submit_prompt
+                if requested_submit_prompt is not None
+                else bool(requested_model)
+            )
             prompt_typed = _type_prompt(term, prompt) if prompt else False
             # S24: bytes reaching the PTY (`prompt_typed`) is not evidence the
             # harness accepted a first turn — `_submit_typed_prompt` presses

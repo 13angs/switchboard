@@ -799,9 +799,9 @@ input.tf::placeholder {
   margin-top: 4px;
 }
 
-/* New Session can expose up to four chooser groups. Keep the dialog bounded
-   by the visible browser viewport and scroll only its content area, so the
-   title and actions never disappear off-screen (S64 follow-up). */
+/* New Session can expose several chooser groups plus an optional first
+   message. Keep the dialog bounded by the visible browser viewport and scroll
+   only its content area, so the title and actions never disappear off-screen. */
 .new-session-overlay {
   box-sizing: border-box;
   padding:
@@ -905,8 +905,88 @@ input.tf::placeholder {
   justify-content: center;
 }
 
+.new-session-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.new-session-mode {
+  min-width: 0;
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--fg);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.new-session-mode.sel {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.new-session-mode:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.new-session-mode-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.new-session-mode-copy {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .new-session-label-field {
+  margin-bottom: 12px;
+}
+
+.new-session-message-field {
   margin-bottom: 0;
+}
+
+.new-session-message {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88px;
+  max-height: 30vh;
+  resize: vertical;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 9px;
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: var(--sans);
+}
+
+.new-session-message:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.new-session-message::placeholder {
+  color: var(--faint);
+}
+
+.new-session-message-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .new-session-actions {
@@ -953,6 +1033,16 @@ input.tf::placeholder {
   .provider-options,
   .model-options {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  .new-session-message {
+    max-height: 24dvh;
+  }
+}
+
+@media (max-width: 380px) {
+  .new-session-mode-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -182,14 +182,16 @@ def test_session_start_reports_prompt_submitted_in_both_branches():
     assert body.count('"prompt_submitted": prompt_submitted') == 2
 
 
-def test_session_start_only_submits_on_the_dispatch_signature():
-    """model + prompt together is the one signature DispatchDialog sends —
-    resume, prompt-less spawn, and chat's own path must stay untouched."""
+def test_session_start_keeps_legacy_dispatch_submit_and_allows_explicit_submit():
+    """Existing model+prompt callers still submit by default, while New Session
+    may request submission explicitly for provider-owned model configurations."""
     src = (_ROOT / "server.py").read_text()
     start = src.index("def _session_start(")
     end = src.index("\n        def ", start + 1)
     body = src[start:end]
-    assert "submit_prompt = bool(requested_model) and bool(prompt)" in body
+    assert 'requested_submit_prompt = body.get("submit_prompt")' in body
+    assert "if requested_submit_prompt is not None" in body
+    assert "else bool(requested_model)" in body
 
 
 def test_session_start_does_not_double_wait_on_the_dispatch_path():

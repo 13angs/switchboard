@@ -8,7 +8,8 @@ interface NewSessionDialogProps {
     provider: string,
     label: string,
     model?: string,
-    effort?: string
+    effort?: string,
+    prompt?: string
   ) => Promise<void>;
   launchers: Launcher[];
 }
@@ -67,6 +68,8 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
   const [model, setModel] = useState(initial.model);
   const [effort, setEffort] = useState(initial.effort);
   const [label, setLabel] = useState('');
+  const [startMode, setStartMode] = useState<'empty' | 'message'>('empty');
+  const [message, setMessage] = useState('');
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -79,7 +82,8 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
     !caps ||
     !caps.available ||
     (caps.pinning && !selectedModel) ||
-    (requiresEffort && !effort);
+    (requiresEffort && !effort) ||
+    (startMode === 'message' && !message.trim());
 
   const selectHarness = (next: Launcher) => {
     const nextProvider = next.providers[0] ?? '';
@@ -123,7 +127,8 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
         provider,
         label.trim(),
         caps?.pinning ? model || undefined : undefined,
-        caps?.pinning && selectedModel?.supports_effort ? effort || undefined : undefined
+        caps?.pinning && selectedModel?.supports_effort ? effort || undefined : undefined,
+        startMode === 'message' ? message.trim() : undefined
       );
     } catch (err) {
       setStartError(err instanceof Error ? err.message : 'Unable to start session');
@@ -143,7 +148,7 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
         <div className="new-session-head">
           <div>
             <h4 id="new-session-title">New session</h4>
-            <p>Choose a harness, provider, model, and effort for this session.</p>
+            <p>Choose whether to open an empty room or start with a message.</p>
           </div>
           <button
             className="icon new-session-close"
@@ -157,6 +162,42 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
         </div>
 
         <div className="new-session-body">
+          <div className="field new-session-mode-field">
+            <label>Start with</label>
+            <div className="new-session-mode-grid" role="group" aria-label="Session start mode">
+              <button
+                type="button"
+                className={`new-session-mode${startMode === 'empty' ? ' sel' : ''}`}
+                aria-pressed={startMode === 'empty'}
+                onClick={() => {
+                  if (!starting) {
+                    setStartMode('empty');
+                    setStartError(null);
+                  }
+                }}
+                disabled={starting}
+              >
+                <span className="new-session-mode-title">Empty session</span>
+                <span className="new-session-mode-copy">Open the room without sending anything.</span>
+              </button>
+              <button
+                type="button"
+                className={`new-session-mode${startMode === 'message' ? ' sel' : ''}`}
+                aria-pressed={startMode === 'message'}
+                onClick={() => {
+                  if (!starting) {
+                    setStartMode('message');
+                    setStartError(null);
+                  }
+                }}
+                disabled={starting}
+              >
+                <span className="new-session-mode-title">Send a message</span>
+                <span className="new-session-mode-copy">Start the room and run the first message now.</span>
+              </button>
+            </div>
+          </div>
+
           <div className="field">
             <label>Harness</label>
             <div className="opts new-session-option-grid harness-options">
@@ -265,6 +306,27 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
             />
           </div>
 
+          {startMode === 'message' && (
+            <div className="field new-session-message-field">
+              <label htmlFor="new-session-message">First message</label>
+              <textarea
+                id="new-session-message"
+                className="new-session-message"
+                placeholder="Tell the agent what to do…"
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  setStartError(null);
+                }}
+                rows={4}
+                disabled={starting}
+              />
+              <span className="new-session-message-hint">
+                This message is submitted as the agent&apos;s first turn.
+              </span>
+            </div>
+          )}
+
           {(capabilityError || startError) && (
             <div className="session-start-error" role="alert">
               {startError || capabilityError}
@@ -279,7 +341,11 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
             onClick={start}
             disabled={launchBlocked || starting}
           >
-            {starting ? 'Starting…' : 'Start session'}
+            {starting
+              ? 'Starting…'
+              : startMode === 'message'
+                ? 'Start & send'
+                : 'Start session'}
           </button>
         </div>
       </div>

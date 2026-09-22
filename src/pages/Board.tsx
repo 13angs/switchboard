@@ -188,7 +188,8 @@ export function Board() {
       provider: string,
       label: string,
       model?: string,
-      effort?: string
+      effort?: string,
+      prompt?: string
     ) => {
       // Open the tab synchronously so browsers treat it as part of the click;
       // navigation happens only after the explicit spawn succeeds.
@@ -197,6 +198,7 @@ export function Board() {
         const res = await startSessionApi(harness, provider, label, {
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          ...(prompt ? { prompt, submit_prompt: true } : {}),
         });
         if (!res.session_id && !res.attach_key) {
           throw new Error('session/start returned no attach identity');

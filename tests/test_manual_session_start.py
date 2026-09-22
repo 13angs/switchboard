@@ -264,6 +264,69 @@ def test_session_start_wires_selected_pin_into_command_and_attach_reuses_one_pty
         server._registry.clear()
 
 
+def test_initial_message_can_submit_without_model_pin(monkeypatch, tmp_path):
+    """Provider-owned model config must not block the New Session first turn."""
+
+    class FirstMessageTerm:
+        session_id = "session:first-message"
+        attach_key = "attach:first-message"
+        harness = "claude"
+
+        def is_alive(self):
+            return True
+
+    term = FirstMessageTerm()
+    typed = []
+    submitted = []
+
+    monkeypatch.setattr(server.harness, "resolve", lambda *_args, **_kwargs: ("claude", "deepseek"))
+    monkeypatch.setattr(server.harness, "provider_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(server, "_get_or_spawn", lambda *_args, **_kwargs: (term, False))
+    monkeypatch.setattr(
+        server,
+        "_type_prompt",
+        lambda _term, prompt: typed.append(prompt) is None,
+    )
+    monkeypatch.setattr(
+        server,
+        "_submit_typed_prompt",
+        lambda _term, prompt: submitted.append(prompt) is None,
+    )
+
+    httpd = HTTPServer(("127.0.0.1", 0), server.make_handler(str(tmp_path)))
+    worker = threading.Thread(target=httpd.serve_forever, daemon=True)
+    worker.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port)
+        conn.request(
+            "POST",
+            "/session/start",
+            body=json.dumps(
+                {
+                    "harness": "claude",
+                    "provider": "deepseek",
+                    "prompt": "Run the first task",
+                    "submit_prompt": True,
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        body = json.loads(response.read())
+        conn.close()
+
+        assert response.status == 200
+        assert body["model"] is None
+        assert body["prompt_typed"] is True
+        assert body["prompt_submitted"] is True
+        assert typed == ["Run the first task"]
+        assert submitted == ["Run the first task"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        worker.join(timeout=2)
+
+
 @pytest.mark.parametrize("provider, field", [("deepseek", "model"), ("ollama", "effort")])
 def test_external_claude_provider_rejects_manual_pin(monkeypatch, tmp_path, provider, field):
     payload = {"harness": "claude", "provider": provider, field: "should-not-override-provider"}
@@ -298,6 +361,7 @@ def test_board_spawns_before_navigation_and_attaches_existing_pty():
     assert "params.set('attach_key', res.attach_key)" in board
     assert "params.set('model'" not in board
     assert "params.set('effort'" not in board
+    assert "submit_prompt: true" in board
     assert board.index("await startSessionApi(") < board.index("popup.location.href = url")
 
 
@@ -317,6 +381,10 @@ def test_new_session_dialog_is_viewport_bounded_with_scrollable_body():
     assert ".new-session-body {" in css
     assert "overflow-y: auto;" in css
     assert ".new-session-actions {" in css
+    assert "startMode === 'message'" in dialog
+    assert 'id="new-session-message"' in dialog
+    assert ".new-session-mode-grid {" in css
+    assert "max-height: 30vh;" in css
 
 
 def test_dialog_uses_provider_specific_server_capabilities():
