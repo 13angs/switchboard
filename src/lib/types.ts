@@ -71,7 +71,9 @@ export interface SessionStartCapabilities {
 export interface Launcher {
   harness: string;
   providers: string[];
-  session_start?: SessionStartCapabilities;
+  /** Manual fresh-session policy is provider-aware: external Claude-compatible
+   * providers own their own model/effort configuration. */
+  session_start?: Record<string, SessionStartCapabilities>;
 }
 
 export interface TranscriptMessage {
