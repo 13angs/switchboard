@@ -60,6 +60,56 @@
 .chat-composer textarea:focus-visible { outline: 2px solid var(--accent); }
 .chat-send-error { width: 100%; color: var(--blocked); font-size: 12px; }
 
+.approval-panel {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.approval-copy {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.approval-copy strong { font-size: 12px; }
+.approval-copy span {
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+.approval-copy small { color: var(--muted); font-size: 11px; }
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.approval-terminal {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+  padding: 6px 8px;
+}
+.approval-terminal:hover { text-decoration: underline; }
+.approval-error {
+  width: 100%;
+  color: var(--blocked);
+  font-size: 11px;
+}
+
+@media (max-width: 600px) {
+  .approval-panel { align-items: stretch; }
+  .approval-actions { width: 100%; }
+  .approval-actions button { flex: 1 1 90px; }
+  .approval-terminal { margin-left: auto; }
+}
+
 /* ── state banner ── */
 .state-banner {
   text-align: center;

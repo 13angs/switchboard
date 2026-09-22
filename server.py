@@ -18,6 +18,7 @@ Endpoints:
                                          /session/start is the only spawn surface)
     GET  /state                       -> {generated_at, repo, sessions[], activities[]}
     GET  /events                      -> Server-Sent Events for lifecycle notifications
+    GET  /session/<id>/interaction    -> current live approval interaction or null
     GET  /health                      -> {ok: true}
     GET  /work                        -> work board page (work.html) (ADR-0029)
     GET  /workspace                   -> {head, projects[], totals, gaps} (ADR-0029)
@@ -38,6 +39,7 @@ Endpoints:
                                          into the PTY; submit_prompt=true submits it
                                          immediately (legacy model+prompt still submits)
     POST /session/<id>/message        -> write text to PTY stdin  body {text}
+    POST /session/<id>/interaction    -> perform pending approval body {action,fingerprint}
     POST /session/<id>/dismiss        -> {ok, session_id}
     POST /session/<id>/undismiss      -> {ok, session_id}
     POST /sessions/dismiss            -> {ok, session_ids[], count}
@@ -152,16 +154,42 @@ _WS_PING_INTERVAL_S = 30.0
 # Model-provider config from projects/switchboard/repos/switchboard/.env — read ONCE at start (C3).
 _ENV_FILE = config.load_env_file()
 _NOTIFICATION_HUB = notifications.NotificationHub()
+_PENDING_INTERACTIONS = notifications.PendingInteractionStore()
 _LIFECYCLE_DETECTOR = notifications.HarnessLifecycleDetector(_NOTIFICATION_HUB.publish)
+
+
+def _record_pending_interaction(
+    term: terminal.PtyTerminal,
+    match_name: str,
+    prompt_text: str,
+    fingerprint_suffix: str,
+) -> None:
+    _PENDING_INTERACTIONS.record(term, match_name, prompt_text, fingerprint_suffix)
+
+
 _OUTPUT_DETECTOR = notifications.HarnessOutputDetector(
     _NOTIFICATION_HUB.publish,
     on_approval=_LIFECYCLE_DETECTOR.mark_approval,
+    on_interaction=_record_pending_interaction,
 )
 
 
 def _observe_terminal_output(term: terminal.PtyTerminal, data: bytes) -> None:
     _OUTPUT_DETECTOR.inspect(term, data)
     _LIFECYCLE_DETECTOR.observe_output(term, data)
+
+
+def _observe_terminal_input(term: terminal.PtyTerminal, data: bytes) -> None:
+    # Any terminal input can answer/move past an approval. Remove the buttons
+    # conservatively before lifecycle accounting so Chat never keeps a stale
+    # action visible after input from Chat or Terminal (ADR-0055 §SD5).
+    _PENDING_INTERACTIONS.clear(term)
+    _LIFECYCLE_DETECTOR.observe_input(term, data)
+
+
+def _observe_terminal_close(term: terminal.PtyTerminal) -> None:
+    _PENDING_INTERACTIONS.clear(term)
+    _LIFECYCLE_DETECTOR.stop(term)
 
 
 def build_state(repo_root: str) -> dict:
@@ -606,6 +634,7 @@ def _build_timeline(store_module, jsonl_path) -> list[dict]:
 
 def _drop_from_registry(term: terminal.PtyTerminal) -> None:
     """Remove a terminal from the registry by identity (called on child exit)."""
+    _PENDING_INTERACTIONS.clear(term)
     with _reg_lock:
         for key, val in list(_registry.items()):
             if val is term:
@@ -737,8 +766,8 @@ def _get_or_spawn(
             effort=None if session_id else effort,
             env=child_env,
             output_observer=_observe_terminal_output,
-            input_observer=_LIFECYCLE_DETECTOR.observe_input,
-            close_observer=_LIFECYCLE_DETECTOR.stop,
+            input_observer=_observe_terminal_input,
+            close_observer=_observe_terminal_close,
         )
         # Every PTY gets an attach_key, resume or fresh — the browser then has
         # one handle that is valid from the first byte (ADR-0028 §SD1).
@@ -1059,6 +1088,8 @@ def make_handler(repo_root: str):
                     self._json(500, {"error": str(e)})
             elif path == "/events":
                 self._events()
+            elif (sid := _session_from_path(path, "interaction")) is not None:
+                self._interaction_get(sid)
             elif (sid := _session_from_path(path, "transcript")) is not None:
                 self._transcript(sid, repo_root)
             elif (sid := _session_from_path(path, "timeline")) is not None:
@@ -1088,6 +1119,8 @@ def make_handler(repo_root: str):
                 self._json(200, {"ok": True, "session_id": sid})
             elif (sid := _session_from_path(path, "kill")) is not None:
                 self._kill(sid)
+            elif (sid := _session_from_path(path, "interaction")) is not None:
+                self._interaction_post(sid)
             elif (sid := _session_from_path(path, "message")) is not None:
                 self._message(sid)
             else:
@@ -1764,6 +1797,69 @@ def make_handler(repo_root: str):
                         "message": "Session starting; retry to re-check.",
                     },
                 )
+
+        def _interaction_get(self, session_id: str):
+            """GET current runtime interaction for one live PTY (ADR-0055)."""
+            with _reg_lock:
+                term = _registry.get(session_id)
+            if term is None or not term.is_alive():
+                self._json(200, {"interaction": None})
+                return
+            interaction = _PENDING_INTERACTIONS.get(term)
+            self._json(
+                200,
+                {"interaction": interaction.to_dict() if interaction is not None else None},
+            )
+
+        def _interaction_post(self, session_id: str):
+            """Perform one stale-safe semantic approval action (ADR-0055)."""
+            body, error = _read_json_body(self)
+            if error:
+                self._json(400, {"error": error})
+                return
+            body = body or {}
+            action = body.get("action")
+            fingerprint = body.get("fingerprint")
+            if not isinstance(action, str) or not action.strip():
+                self._json(400, {"error": "missing 'action' field"})
+                return
+            if not isinstance(fingerprint, str) or not fingerprint.strip():
+                self._json(400, {"error": "missing 'fingerprint' field"})
+                return
+
+            with _reg_lock:
+                term = _registry.get(session_id)
+            if term is None:
+                self._json(
+                    409,
+                    {"error": "session has no active PTY; open Terminal to resume it"},
+                )
+                return
+            if not term.is_alive():
+                self._json(410, {"error": "session ended"})
+                return
+
+            try:
+                writes = _PENDING_INTERACTIONS.consume(
+                    term, fingerprint.strip(), action.strip()
+                )
+            except notifications.InteractionConflict as e:
+                self._json(409, {"error": str(e)})
+                return
+
+            try:
+                for index, chunk in enumerate(writes):
+                    term.write(chunk)
+                    if index + 1 < len(writes):
+                        time.sleep(0.05)
+            except OSError as e:
+                self._json(500, {"error": f"stdin write failed: {e}"})
+                return
+
+            self._json(
+                200,
+                {"ok": True, "session_id": session_id, "action": action.strip()},
+            )
 
         def _message(self, session_id: str):
             """POST /session/<id>/message — write only to an existing PTY."""

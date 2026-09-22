@@ -1,6 +1,12 @@
 /** Typed fetch wrappers — all server communication centralised here. */
 
-import type { BoardState, Transcript, RichTranscript, OkResponse } from './types';
+import type {
+  BoardState,
+  Transcript,
+  RichTranscript,
+  OkResponse,
+  SessionInteractionResponse,
+} from './types';
 import type { TimelineResponse } from './timeline';
 
 const BASE = '';
@@ -33,6 +39,40 @@ export async function fetchRichTranscript(
   since?: string
 ): Promise<RichTranscript> {
   return fetchTranscript(sessionId, since, 'rich') as Promise<unknown> as Promise<RichTranscript>;
+}
+
+/** Read the current live runtime interaction; SSE is only a wake-up signal. */
+export async function fetchSessionInteraction(
+  sessionId: string
+): Promise<SessionInteractionResponse> {
+  const res = await fetch(
+    `${BASE}/session/${encodeURIComponent(sessionId)}/interaction`
+  );
+  if (!res.ok) throw new Error(`interaction ${res.status}`);
+  return res.json();
+}
+
+/** Perform one stale-safe semantic approval action (ADR-0055). */
+export async function sendSessionInteractionAction(
+  sessionId: string,
+  action: string,
+  fingerprint: string
+): Promise<OkResponse> {
+  const res = await fetch(
+    `${BASE}/session/${encodeURIComponent(sessionId)}/interaction`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, fingerprint }),
+    }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: string } | null;
+    const error = new Error(data?.error || `interaction ${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
 }
 
 /** Submit semantic text to a running session; the server owns harness input. */

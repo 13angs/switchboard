@@ -118,6 +118,26 @@ export interface RichTranscript {
   messages: RichMessage[];
 }
 
+export interface SessionInteractionAction {
+  id: string;
+  label: string;
+  intent: string;
+}
+
+export interface SessionInteraction {
+  kind: 'approval';
+  harness: string;
+  provider: string;
+  fingerprint: string;
+  prompt_summary: string;
+  detected_at: string;
+  actions: SessionInteractionAction[];
+}
+
+export interface SessionInteractionResponse {
+  interaction: SessionInteraction | null;
+}
+
 export interface SessionStartResponse {
   session_id: string | null;
   session_started: boolean;
