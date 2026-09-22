@@ -248,7 +248,7 @@ class HarnessOutputDetector:
             ("claude-allow-options", r"\b1\.\s*yes\b[\s\S]{0,160}\b2\.\s*no\b"),
         ],
         "codex": [
-            ("codex-allow-command", r"\ballow (?:command|this command)\?"),
+            ("codex-allow-command", r"\ballow (?:command|this command)\?[^\n]{0,80}"),
             ("codex-approve", r"\bapprove[^\n]{0,120}\?"),
         ],
         "*": [
