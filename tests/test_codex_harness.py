@@ -489,7 +489,9 @@ def test_transcript_source_falls_back_to_claude_store_by_id():
 def test_state_exposes_launchers_and_legacy_providers():
     state = srv_mod.build_state(str(REPO))
     assert state["providers"] == config.available_providers(srv_mod._ENV_FILE)
-    assert {"harness": "codex", "providers": ["openai"]} in state["launchers"]
+    codex = next(item for item in state["launchers"] if item["harness"] == "codex")
+    assert codex["providers"] == ["openai"]
+    assert codex["session_start"]["pinning"] is True
 
 
 def test_codex_store_parses_function_call_and_output_as_rich_blocks():
