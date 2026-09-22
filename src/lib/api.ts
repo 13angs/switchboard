@@ -123,10 +123,11 @@ export interface StartSessionOptions {
   /** Pins the thinking depth (ADR-0032) — `low`/`medium`/`high`/`xhigh`/`max`.
    *  Fresh spawns only, same rule as `model`. */
   effort?: string;
-  /** Typed into the PTY. Submitted too when `model` is also given — the
-   *  board's dispatch dialog signature (ADR-0034 §SD1, ADR-0038 §SD2) —
-   *  otherwise left unsent for a person to press Enter on. */
+  /** Typed into the PTY after a fresh spawn. */
   prompt?: string;
+  /** Submit `prompt` immediately after typing it. When omitted, the server
+   *  keeps the legacy model+prompt dispatch behavior for existing callers. */
+  submit_prompt?: boolean;
 }
 
 export interface StartSessionResponse {
