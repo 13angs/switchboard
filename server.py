@@ -173,7 +173,7 @@ def build_state(repo_root: str) -> dict:
         "repo": repo_root,
         "activities": state.ACTIVITIES,
         "providers": config.available_providers(_ENV_FILE),
-        "launchers": harness.available_launchers(_ENV_FILE),
+        "launchers": harness.available_launchers(_ENV_FILE, repo_root),
         "sessions": [c.to_dict() for c in cards],
     }
 
@@ -1674,14 +1674,17 @@ def make_handler(repo_root: str):
                 _submit_typed_prompt(term, prompt) if prompt_typed and submit_prompt else False
             )
 
-            # Wait for the id-capture thread to discover the session_id (max 30s).
+            # Wait for id discovery only when a prompt was typed by this HTTP
+            # request. A prompt-less manual session must return immediately on
+            # attach_key so the browser can open the terminal that will create
+            # its first transcript-backed session_id (ADR-0054 §SD6).
             # Skipped on the dispatch-submit path: _submit_typed_prompt above
             # already waited on this exact evidence for up to
             # _SUBMIT_RETRY_WINDOW_S — running this a second time would only
             # add latency to a result it cannot change (nothing further
             # presses Enter here to produce new evidence for this loop to
             # find).
-            if not (prompt_typed and submit_prompt):
+            if prompt and not (prompt_typed and submit_prompt):
                 deadline = time.time() + 30
                 while (
                     time.time() < deadline
