@@ -27,8 +27,18 @@ const HARNESS_LABELS: Record<string, { label: string; sub: string }> = {
   agy: { label: 'Antigravity', sub: 'Antigravity CLI (agy)' },
 };
 
-function defaultSelection(launcher: Launcher | undefined): { model: string; effort: string } {
-  const caps = launcher?.session_start;
+function capabilities(
+  launcher: Launcher | undefined,
+  provider: string
+) {
+  return launcher?.session_start?.[provider];
+}
+
+function defaultSelection(
+  launcher: Launcher | undefined,
+  provider: string
+): { model: string; effort: string } {
+  const caps = capabilities(launcher, provider);
   if (!caps) return { model: '', effort: '' };
   const model = caps.defaults.model ?? '';
   const selected = caps.models.find((candidate) => candidate.id === model);
@@ -48,18 +58,19 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
   launchers,
 }) => {
   const firstLauncher = launchers[0];
-  const initial = defaultSelection(firstLauncher);
+  const firstProvider = firstLauncher?.providers[0] ?? '';
+  const initial = defaultSelection(firstLauncher, firstProvider);
   const [harness, setHarness] = useState(firstLauncher?.harness ?? '');
   const currentLauncher =
     launchers.find((launcher) => launcher.harness === harness) ?? firstLauncher;
-  const [provider, setProvider] = useState(firstLauncher?.providers[0] ?? '');
+  const [provider, setProvider] = useState(firstProvider);
   const [model, setModel] = useState(initial.model);
   const [effort, setEffort] = useState(initial.effort);
   const [label, setLabel] = useState('');
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
-  const caps = currentLauncher?.session_start;
+  const caps = capabilities(currentLauncher, provider);
   const selectedModel = caps?.models.find((candidate) => candidate.id === model) ?? null;
   const requiresEffort = Boolean(selectedModel?.supports_effort && caps?.efforts.length);
   const capabilityError = caps?.error ?? (!caps ? 'Launch capabilities are unavailable.' : null);
@@ -71,9 +82,18 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
     (requiresEffort && !effort);
 
   const selectHarness = (next: Launcher) => {
-    const nextSelection = defaultSelection(next);
+    const nextProvider = next.providers[0] ?? '';
+    const nextSelection = defaultSelection(next, nextProvider);
     setHarness(next.harness);
-    setProvider(next.providers[0] ?? '');
+    setProvider(nextProvider);
+    setModel(nextSelection.model);
+    setEffort(nextSelection.effort);
+    setStartError(null);
+  };
+
+  const selectProvider = (nextProvider: string) => {
+    const nextSelection = defaultSelection(currentLauncher, nextProvider);
+    setProvider(nextProvider);
     setModel(nextSelection.model);
     setEffort(nextSelection.effort);
     setStartError(null);
@@ -152,12 +172,7 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
                 <div
                   key={candidate}
                   className={`opt${provider === candidate ? ' sel' : ''}`}
-                  onClick={() => {
-                    if (!starting) {
-                      setProvider(candidate);
-                      setStartError(null);
-                    }
-                  }}
+                  onClick={() => !starting && selectProvider(candidate)}
                 >
                   <span className="opt-radio" />
                   {PROVIDER_LABELS[candidate] || candidate}
