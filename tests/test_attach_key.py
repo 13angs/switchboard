@@ -203,7 +203,7 @@ def test_session_start_does_not_double_wait_on_the_dispatch_path():
     start = src.index("def _session_start(")
     end = src.index("\n        def ", start + 1)
     body = src[start:end]
-    assert "if not (prompt_typed and submit_prompt):" in body
+    assert "if prompt and not (prompt_typed and submit_prompt):" in body
 
 
 def test_dispatch_dialog_forwards_the_key_it_was_given():
