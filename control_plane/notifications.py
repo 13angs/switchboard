@@ -41,6 +41,128 @@ class NotificationEvent:
         }
 
 
+@dataclass(frozen=True)
+class InteractionAction:
+    id: str
+    label: str
+    intent: str
+    writes: tuple[bytes, ...]
+
+
+@dataclass(frozen=True)
+class PendingInteraction:
+    kind: str
+    harness: str
+    provider: str
+    fingerprint: str
+    prompt_summary: str
+    detected_at: str
+    actions: tuple[InteractionAction, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "harness": self.harness,
+            "provider": self.provider,
+            "fingerprint": self.fingerprint,
+            "prompt_summary": self.prompt_summary,
+            "detected_at": self.detected_at,
+            "actions": [
+                {"id": action.id, "label": action.label, "intent": action.intent}
+                for action in self.actions
+            ],
+        }
+
+
+class InteractionConflict(Exception):
+    """The requested interaction/action is stale or no longer available."""
+
+
+class PendingInteractionStore:
+    """Ephemeral approval state keyed by the live PTY object (ADR-0055)."""
+
+    def __init__(self):
+        self._items: dict[int, PendingInteraction] = {}
+        self._lock = threading.Lock()
+
+    def record(
+        self,
+        term,
+        match_name: str,
+        prompt_text: str,
+        fingerprint_suffix: str,
+    ) -> PendingInteraction:
+        prompt = " ".join(prompt_text.split())[:240]
+        actions = self._actions_for(term.harness, match_name, prompt_text)
+        interaction = PendingInteraction(
+            kind="approval",
+            harness=term.harness,
+            provider=term.provider,
+            fingerprint=f"{_sid_or_pid(term)}:{term.harness}:{fingerprint_suffix}",
+            prompt_summary=prompt or "Approval required",
+            detected_at=datetime.now(timezone.utc).isoformat(),
+            actions=actions,
+        )
+        with self._lock:
+            current = self._items.get(id(term))
+            if current is None or current.fingerprint != interaction.fingerprint:
+                self._items[id(term)] = interaction
+            else:
+                interaction = current
+        return interaction
+
+    def get(self, term) -> Optional[PendingInteraction]:
+        with self._lock:
+            return self._items.get(id(term))
+
+    def clear(self, term) -> None:
+        with self._lock:
+            self._items.pop(id(term), None)
+
+    def consume(self, term, fingerprint: str, action_id: str) -> tuple[bytes, ...]:
+        with self._lock:
+            current = self._items.get(id(term))
+            if current is None or current.fingerprint != fingerprint:
+                raise InteractionConflict("approval is stale or no longer pending")
+            action = next((a for a in current.actions if a.id == action_id), None)
+            if action is None:
+                raise InteractionConflict("approval action is unavailable")
+            self._items.pop(id(term), None)
+            return action.writes
+
+    @staticmethod
+    def _actions_for(
+        harness: str, match_name: str, prompt_text: str
+    ) -> tuple[InteractionAction, ...]:
+        # Only prompt families whose visible contract identifies an exact
+        # terminal answer become actionable. Everything else remains a
+        # notification-only approval and falls back to Terminal.
+        if harness == "claude" and match_name == "claude-allow-options":
+            return (
+                InteractionAction("approve", "Yes", "approve", (b"1", b"\r")),
+                InteractionAction("reject", "No", "reject", (b"2", b"\r")),
+            )
+        if harness == "codex" and re.search(
+            r"(?:\[[^\]]*[yY][^\]]*[nN][^\]]*\]|\by/n\b)",
+            prompt_text,
+            flags=re.IGNORECASE,
+        ):
+            return (
+                InteractionAction("approve", "Yes", "approve", (b"y", b"\r")),
+                InteractionAction("reject", "No", "reject", (b"n", b"\r")),
+            )
+        if match_name == "generic-approval" and re.search(
+            r"(?:\[[^\]]*[yY][^\]]*[nN][^\]]*\]|\by/n\b)",
+            prompt_text,
+            flags=re.IGNORECASE,
+        ):
+            return (
+                InteractionAction("approve", "Yes", "approve", (b"y", b"\r")),
+                InteractionAction("reject", "No", "reject", (b"n", b"\r")),
+            )
+        return ()
+
+
 class NotificationHub:
     """In-memory pub/sub hub for SSE listeners."""
 
@@ -143,6 +265,7 @@ class HarnessOutputDetector:
         patterns: Optional[dict[str, list[tuple[str, str]]]] = None,
         dedupe_seconds: float = 60.0,
         on_approval: Optional[Callable[[object], None]] = None,
+        on_interaction: Optional[Callable[[object, str, str, str], None]] = None,
         id_wait_seconds: float = 30.0,
         id_poll_seconds: float = 0.25,
     ):
@@ -150,6 +273,7 @@ class HarnessOutputDetector:
         self._patterns = patterns or self._DEFAULT_PATTERNS
         self._dedupe_seconds = dedupe_seconds
         self._on_approval = on_approval
+        self._on_interaction = on_interaction
         self._id_wait_seconds = id_wait_seconds
         self._id_poll_seconds = id_poll_seconds
         self._buffers: dict[int, str] = {}
@@ -194,6 +318,8 @@ class HarnessOutputDetector:
             self._id_wait_seconds,
             self._id_poll_seconds,
         )
+        if self._on_interaction:
+            self._on_interaction(term, match_name, prompt_text, fingerprint_suffix)
         if self._on_approval:
             self._on_approval(term)
 
