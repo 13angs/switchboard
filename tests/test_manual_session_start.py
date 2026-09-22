@@ -136,7 +136,7 @@ def test_dialog_renders_only_server_supplied_model_and_effort_choices():
     assert "launcher?.session_start" in dialog
     assert "caps.defaults.model" in dialog
     assert "caps.defaults.effort" in dialog
-    assert "option.supports_effort" in dialog
+    assert "selectedModel?.supports_effort" in dialog
     assert "caps.efforts.map" in dialog
     for concrete_id in ("claude-sonnet", "claude-opus", "claude-haiku", "gpt-5."):
         assert concrete_id not in dialog
