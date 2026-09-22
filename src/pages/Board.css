@@ -781,6 +781,17 @@ input.tf::placeholder {
   color: var(--faint);
 }
 
+.session-start-error {
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: var(--danger);
+  background: var(--panel-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
