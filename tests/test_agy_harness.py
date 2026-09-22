@@ -416,7 +416,9 @@ def test_find_session_path():
 
 def test_state_exposes_agy_launcher():
     state = srv_mod.build_state(str(REPO))
-    assert {"harness": "agy", "providers": ["google"]} in state["launchers"]
+    agy = next(item for item in state["launchers"] if item["harness"] == "agy")
+    assert agy["providers"] == ["google"]
+    assert agy["session_start"]["pinning"] is False
 
 
 def test_state_marks_agy_card_when_metadata_cache_is_incomplete():
