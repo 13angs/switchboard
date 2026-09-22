@@ -132,123 +132,147 @@ export const NewSessionDialog: FC<NewSessionDialogProps> = ({
   };
 
   return (
-    <div className="overlay" onClick={starting ? undefined : onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h4>New session</h4>
-
-        <div className="field">
-          <label>Harness</label>
-          <div className="opts">
-            {launchers.map((launcher) => {
-              const meta = HARNESS_LABELS[launcher.harness] ?? {
-                label: launcher.harness,
-                sub: `${launcher.harness} CLI`,
-              };
-              return (
-                <div
-                  key={launcher.harness}
-                  className={`opt harness${harness === launcher.harness ? ' sel' : ''}`}
-                  onClick={() => !starting && selectHarness(launcher)}
-                >
-                  <span className="opt-radio" />
-                  <span className="opt-copy">
-                    <b>{meta.label}</b>
-                    <span>{meta.sub}</span>
-                  </span>
-                  <span className="sub">
-                    {launcher.providers.length} provider{launcher.providers.length > 1 ? 's' : ''}
-                  </span>
-                </div>
-              );
-            })}
+    <div className="overlay new-session-overlay" onClick={starting ? undefined : onClose}>
+      <div
+        className="modal new-session-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-session-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="new-session-head">
+          <div>
+            <h4 id="new-session-title">New session</h4>
+            <p>Choose a harness, provider, model, and effort for this session.</p>
           </div>
-        </div>
-
-        {currentLauncher && (
-          <div className="field">
-            <label>Provider</label>
-            <div className="opts">
-              {currentLauncher.providers.map((candidate) => (
-                <div
-                  key={candidate}
-                  className={`opt${provider === candidate ? ' sel' : ''}`}
-                  onClick={() => !starting && selectProvider(candidate)}
-                >
-                  <span className="opt-radio" />
-                  {PROVIDER_LABELS[candidate] || candidate}
-                  <span className="sub">
-                    {candidate === 'deepseek' || candidate === 'ollama' ? 'configured' : 'default'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {caps?.models.length ? (
-          <div className="field">
-            <label>Model</label>
-            <div className="opts">
-              {caps.models.map((option) => (
-                <div
-                  key={option.id}
-                  className={`opt${model === option.id ? ' sel' : ''}`}
-                  onClick={() => !starting && selectModel(option)}
-                >
-                  <span className="opt-radio" />
-                  <b>{tierLabel(option)}</b>
-                  <span className="sub">{option.id}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {selectedModel?.supports_effort && caps?.efforts.length ? (
-          <div className="field">
-            <label>Effort</label>
-            <div className="opts">
-              {caps.efforts.map((candidate) => (
-                <div
-                  key={candidate}
-                  className={`opt${effort === candidate ? ' sel' : ''}`}
-                  onClick={() => {
-                    if (!starting) {
-                      setEffort(candidate);
-                      setStartError(null);
-                    }
-                  }}
-                >
-                  <span className="opt-radio" />
-                  {candidate}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="field">
-          <label>
-            Label <span className="label-optional">(optional)</span>
-          </label>
-          <input
-            className="tf"
-            type="text"
-            placeholder="short name for the card"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            autoComplete="off"
+          <button
+            className="icon new-session-close"
+            type="button"
+            aria-label="Close new session dialog"
+            onClick={onClose}
             disabled={starting}
-          />
+          >
+            ×
+          </button>
         </div>
 
-        {(capabilityError || startError) && (
-          <div className="session-start-error" role="alert">
-            {startError || capabilityError}
+        <div className="new-session-body">
+          <div className="field">
+            <label>Harness</label>
+            <div className="opts new-session-option-grid harness-options">
+              {launchers.map((launcher) => {
+                const meta = HARNESS_LABELS[launcher.harness] ?? {
+                  label: launcher.harness,
+                  sub: `${launcher.harness} CLI`,
+                };
+                return (
+                  <div
+                    key={launcher.harness}
+                    className={`opt harness${harness === launcher.harness ? ' sel' : ''}`}
+                    onClick={() => !starting && selectHarness(launcher)}
+                  >
+                    <span className="opt-radio" />
+                    <span className="opt-copy">
+                      <b>{meta.label}</b>
+                      <span>{meta.sub}</span>
+                    </span>
+                    <span className="sub">
+                      {launcher.providers.length} provider{launcher.providers.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        )}
 
-        <div className="modal-actions">
+          {currentLauncher && (
+            <div className="field">
+              <label>Provider</label>
+              <div className="opts new-session-option-grid provider-options">
+                {currentLauncher.providers.map((candidate) => (
+                  <div
+                    key={candidate}
+                    className={`opt${provider === candidate ? ' sel' : ''}`}
+                    onClick={() => !starting && selectProvider(candidate)}
+                  >
+                    <span className="opt-radio" />
+                    {PROVIDER_LABELS[candidate] || candidate}
+                    <span className="sub">
+                      {candidate === 'deepseek' || candidate === 'ollama' ? 'configured' : 'default'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {caps?.models.length ? (
+            <div className="field">
+              <label>Model</label>
+              <div className="opts new-session-option-grid model-options">
+                {caps.models.map((option) => (
+                  <div
+                    key={option.id}
+                    className={`opt model-option${model === option.id ? ' sel' : ''}`}
+                    onClick={() => !starting && selectModel(option)}
+                  >
+                    <span className="opt-radio" />
+                    <span className="opt-copy">
+                      <b>{tierLabel(option)}</b>
+                      <span>{option.id}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {selectedModel?.supports_effort && caps?.efforts.length ? (
+            <div className="field">
+              <label>Effort</label>
+              <div className="opts effort-options">
+                {caps.efforts.map((candidate) => (
+                  <div
+                    key={candidate}
+                    className={`opt effort-option${effort === candidate ? ' sel' : ''}`}
+                    onClick={() => {
+                      if (!starting) {
+                        setEffort(candidate);
+                        setStartError(null);
+                      }
+                    }}
+                  >
+                    <span className="opt-radio" />
+                    {candidate}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="field new-session-label-field">
+            <label>
+              Label <span className="label-optional">(optional)</span>
+            </label>
+            <input
+              className="tf"
+              type="text"
+              placeholder="short name for the card"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              autoComplete="off"
+              disabled={starting}
+            />
+          </div>
+
+          {(capabilityError || startError) && (
+            <div className="session-start-error" role="alert">
+              {startError || capabilityError}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-actions new-session-actions">
           <button onClick={onClose} disabled={starting}>Cancel</button>
           <button
             className="primary"

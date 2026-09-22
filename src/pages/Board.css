@@ -799,6 +799,163 @@ input.tf::placeholder {
   margin-top: 4px;
 }
 
+/* New Session can expose up to four chooser groups. Keep the dialog bounded
+   by the visible browser viewport and scroll only its content area, so the
+   title and actions never disappear off-screen (S64 follow-up). */
+.new-session-overlay {
+  box-sizing: border-box;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
+
+.new-session-modal {
+  width: min(560px, 100%);
+  max-width: none;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-session-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.new-session-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.new-session-head h4 {
+  margin: 0;
+}
+
+.new-session-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.new-session-close {
+  flex: 0 0 auto;
+  margin: -2px -4px 0 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.new-session-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 14px 16px;
+}
+
+.new-session-option-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.harness-options {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.provider-options {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.model-options {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.new-session-option-grid .opt {
+  min-width: 0;
+}
+
+.new-session-option-grid .opt-copy {
+  min-width: 0;
+}
+
+.new-session-option-grid .opt-copy span {
+  overflow-wrap: anywhere;
+}
+
+.harness-options .opt > .sub {
+  display: none;
+}
+
+.effort-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  gap: 6px;
+}
+
+.effort-option {
+  justify-content: center;
+}
+
+.new-session-label-field {
+  margin-bottom: 0;
+}
+
+.new-session-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 11px 16px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+
+.new-session-actions button {
+  min-height: 32px;
+}
+
+@media (max-width: 520px) {
+  .new-session-overlay {
+    align-items: stretch;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+  }
+
+  .new-session-modal {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    margin: auto 0;
+  }
+
+  .new-session-head,
+  .new-session-body {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .new-session-actions {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .harness-options,
+  .provider-options,
+  .model-options {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+}
+
 /* toast */
 .toast-container {
   position: fixed;
