@@ -4,6 +4,7 @@ import type { RichMessage } from '../../lib/types';
 import { StateBanner } from './StateBanner';
 import { MessageList } from './MessageList';
 import { ChatComposer } from './ChatComposer';
+import { ApprovalPanel } from './ApprovalPanel';
 
 type ChatState = 'loading' | 'error' | 'ready' | 'ended' | 'connecting' | null;
 interface ExternalTranscript {
@@ -65,6 +66,14 @@ export function SessionChat({ sessionId, active = false, external }: {
     <div className="chat-body session-chat">
       <StateBanner state={chatState} errorMessage={chatError} />
       {external?.content ?? <MessageList messages={displayed} typing={external?.typing ?? false} />}
+      {sessionId && (
+        <ApprovalPanel
+          key={`approval-${sessionId}`}
+          sessionId={sessionId}
+          active={active}
+          onResolved={onSent}
+        />
+      )}
       {sessionId && <ChatComposer key={sessionId} sessionId={sessionId} onSent={onSent} />}
       {external?.footer}
     </div>
