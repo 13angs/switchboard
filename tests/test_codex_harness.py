@@ -491,7 +491,7 @@ def test_state_exposes_launchers_and_legacy_providers():
     assert state["providers"] == config.available_providers(srv_mod._ENV_FILE)
     codex = next(item for item in state["launchers"] if item["harness"] == "codex")
     assert codex["providers"] == ["openai"]
-    assert codex["session_start"]["pinning"] is True
+    assert codex["session_start"]["openai"]["pinning"] is True
 
 
 def test_codex_store_parses_function_call_and_output_as_rich_blocks():
