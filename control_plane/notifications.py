@@ -244,8 +244,10 @@ class HarnessOutputDetector:
 
     _DEFAULT_PATTERNS: dict[str, list[tuple[str, str]]] = {
         "claude": [
-            ("claude-allow-tool", r"\bdo you want to (?:allow|proceed|continue)\b"),
+            # Specific actionable shape first; the generic phrase otherwise
+            # matches earlier in the same buffer and would hide its options.
             ("claude-allow-options", r"\b1\.\s*yes\b[\s\S]{0,160}\b2\.\s*no\b"),
+            ("claude-allow-tool", r"\bdo you want to (?:allow|proceed|continue)\b"),
         ],
         "codex": [
             ("codex-allow-command", r"\ballow (?:command|this command)\?[^\n]{0,80}"),
