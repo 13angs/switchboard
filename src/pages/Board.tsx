@@ -3,6 +3,7 @@ import { useBoardState } from '../hooks/useBoardState';
 import { useNotifications } from '../hooks/useNotifications';
 import {
   fetchTranscript,
+  startSession as startSessionApi,
   killSession,
   dismissSession,
   dismissSessions,
@@ -182,12 +183,41 @@ export function Board() {
   }, []);
 
   const startSession = useCallback(
-    (harness: string, provider: string, label: string) => {
-      setDialogOpen(false);
-      // New sessions start in Terminal; Board Chat continues existing sessions.
-      let url = `/agent?view=terminal&harness=${encodeURIComponent(harness)}&provider=${encodeURIComponent(provider)}`;
-      if (label) url += `&label=${encodeURIComponent(label)}`;
-      window.open(url, '_blank');
+    async (
+      harness: string,
+      provider: string,
+      label: string,
+      model?: string,
+      effort?: string
+    ) => {
+      // Open the tab synchronously so browsers treat it as part of the click;
+      // navigation happens only after the explicit spawn succeeds.
+      const popup = window.open('', '_blank');
+      try {
+        const res = await startSessionApi(harness, provider, label, {
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+        });
+        if (!res.session_id && !res.attach_key) {
+          throw new Error('session/start returned no attach identity');
+        }
+
+        const params = new URLSearchParams();
+        params.set('view', 'terminal');
+        params.set('harness', harness);
+        params.set('provider', provider);
+        if (res.session_id) params.set('session_id', res.session_id);
+        else if (res.attach_key) params.set('attach_key', res.attach_key);
+        if (label) params.set('label', label);
+
+        const url = `/agent?${params.toString()}`;
+        if (popup) popup.location.href = url;
+        else window.open(url, '_blank');
+        setDialogOpen(false);
+      } catch (err) {
+        popup?.close();
+        throw err;
+      }
     },
     []
   );
@@ -263,7 +293,7 @@ export function Board() {
         <NewSessionDialog
           onClose={() => setDialogOpen(false)}
           onStart={startSession}
-          launchers={state?.launchers ?? [{ harness: 'claude', providers: state?.providers ?? ['claude'] }]}
+          launchers={state?.launchers ?? []}
         />
       )}
 

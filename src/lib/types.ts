@@ -45,9 +45,35 @@ export interface BoardState {
   sessions: SessionCard[];
 }
 
+export type SessionModelTier = 'light' | 'standard' | 'heavy';
+
+export interface SessionStartModelOption {
+  tier: SessionModelTier;
+  id: string;
+  supports_effort: boolean;
+}
+
+export interface SessionStartCapabilities {
+  /** Whether this harness supports explicit model/effort pinning at all. */
+  pinning: boolean;
+  models: SessionStartModelOption[];
+  efforts: string[];
+  defaults: {
+    tier: SessionModelTier | null;
+    model: string | null;
+    effort: string | null;
+  };
+  /** False means a pin-capable launcher failed to resolve its canonical map. */
+  available: boolean;
+  error: string | null;
+}
+
 export interface Launcher {
   harness: string;
   providers: string[];
+  /** Manual fresh-session policy is provider-aware: external Claude-compatible
+   * providers own their own model/effort configuration. */
+  session_start?: Record<string, SessionStartCapabilities>;
 }
 
 export interface TranscriptMessage {
