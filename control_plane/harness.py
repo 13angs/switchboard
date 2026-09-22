@@ -17,23 +17,31 @@ _MANUAL_TIERS = ("light", "standard", "heavy")
 _EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max")
 
 
-def _manual_session_start_capabilities(repo_root: str, harness_name: str) -> dict:
-    """Project workspace launch policy for one manual fresh-session harness.
+def _unmanaged_session_start_capabilities() -> dict:
+    """Manual launch where the provider owns its model/effort policy."""
+    return {
+        "pinning": False,
+        "models": [],
+        "efforts": [],
+        "defaults": {"tier": None, "model": None, "effort": None},
+        "available": True,
+        "error": None,
+    }
 
-    The browser renders this projection; it never owns concrete model ids or
-    effort compatibility rules (ADR-0054).
+
+def _manual_session_start_capabilities(
+    repo_root: str, harness_name: str, provider: str
+) -> dict:
+    """Project launch policy for one concrete harness/provider pair.
+
+    Claude-compatible external providers already own model/effort via their
+    provider environment. Until they expose a provider-specific catalog, manual
+    New Session must not apply the native Claude canonical tier map on top.
     """
-    empty_defaults = {"tier": None, "model": None, "effort": None}
-    if harness_name == "agy":
-        return {
-            "pinning": False,
-            "models": [],
-            "efforts": [],
-            "defaults": empty_defaults,
-            "available": True,
-            "error": None,
-        }
+    if harness_name == "agy" or (harness_name == "claude" and provider != "claude"):
+        return _unmanaged_session_start_capabilities()
 
+    empty_defaults = {"tier": None, "model": None, "effort": None}
     try:
         payload = workspace.workspace_overview(repo_root)
     except ValueError as exc:
@@ -64,18 +72,14 @@ def _manual_session_start_capabilities(repo_root: str, harness_name: str) -> dic
             ),
         }
 
-    models = []
-    for tier in _MANUAL_TIERS:
-        models.append(
-            {
-                "tier": tier,
-                "id": tiers[tier],
-                "supports_effort": not (
-                    harness_name == "claude" and tier == "light"
-                ),
-            }
-        )
-
+    models = [
+        {
+            "tier": tier,
+            "id": tiers[tier],
+            "supports_effort": not (harness_name == "claude" and tier == "light"),
+        }
+        for tier in _MANUAL_TIERS
+    ]
     efforts = [
         effort
         for effort in _EFFORT_ORDER
@@ -99,12 +103,7 @@ def _manual_session_start_capabilities(repo_root: str, harness_name: str) -> dic
 
 
 def available_launchers(env_file: dict, repo_root: Optional[str] = None) -> list[dict]:
-    """Return launcher options for /state.
-
-    When repo_root is supplied, each launcher also carries the manual
-    session-start capabilities/defaults defined by ADR-0054. Keeping the
-    argument optional preserves non-Board callers that only need providers.
-    """
+    """Return launcher options for /state, including provider-aware policy."""
     launchers = [
         {"harness": "claude", "providers": config.available_providers(env_file)},
         {"harness": "codex", "providers": ["openai"]},
@@ -112,9 +111,12 @@ def available_launchers(env_file: dict, repo_root: Optional[str] = None) -> list
     ]
     if repo_root is not None:
         for launcher in launchers:
-            launcher["session_start"] = _manual_session_start_capabilities(
-                repo_root, launcher["harness"]
-            )
+            launcher["session_start"] = {
+                provider: _manual_session_start_capabilities(
+                    repo_root, launcher["harness"], provider
+                )
+                for provider in launcher["providers"]
+            }
     return launchers
 
 
