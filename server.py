@@ -1570,6 +1570,17 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "model must be a string"})
                 return
             requested_model = (requested_model or "").strip() or None
+            if requested_model and harness_name == "claude" and provider != "claude":
+                self._json(
+                    400,
+                    {
+                        "error": (
+                            f"{provider} owns its model configuration; "
+                            "manual model pinning is unsupported"
+                        )
+                    },
+                )
+                return
             if requested_model:
                 allowed = workspace.allowed_models(repo_root, harness_name)
                 if not allowed:
@@ -1598,6 +1609,17 @@ def make_handler(repo_root: str):
                 self._json(400, {"error": "effort must be a string"})
                 return
             requested_effort = (requested_effort or "").strip().lower() or None
+            if requested_effort and harness_name == "claude" and provider != "claude":
+                self._json(
+                    400,
+                    {
+                        "error": (
+                            f"{provider} owns its effort configuration; "
+                            "manual effort pinning is unsupported"
+                        )
+                    },
+                )
+                return
             if requested_effort:
                 if requested_effort not in workspace.VALID_EFFORTS:
                     self._json(
